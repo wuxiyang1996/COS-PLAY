@@ -51,7 +51,7 @@ GPT-5.4 · 1204<br>
 <img src="replay/replays/avg_gpt54_twenty_forty_eight.gif" width="180">
 </td>
 <td align="center">
-GPT-5.4 · 832<br>
+GPT-5.4 · 443<br>
 <img src="replay/replays/avg_gpt54_tetris.gif" width="180">
 </td>
 <td align="center">
