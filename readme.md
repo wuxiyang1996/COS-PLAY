@@ -1,11 +1,11 @@
 # COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Tasks
 
 <p align="center">
-  <a href="https://wuxiyang1996.github.io/COSPLAY_page/"><img src="https://img.shields.io/badge/Project-Page-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Project Page"></a>
-  <a href="https://arxiv.org/abs/2604.20987"><img src="https://img.shields.io/badge/arXiv-2604.20987-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"></a>
-  <a href="https://github.com/wuxiyang1996/cos-play"><img src="https://img.shields.io/badge/Code-GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
-  <a href="https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Cold--Start%20Data-FFD21E?style=for-the-badge" alt="HuggingFace Dataset"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://wuxiyang1996.github.io/COSPLAY_page/"><img src="https://img.shields.io/badge/Project-Page-4285F4?logo=googlechrome&logoColor=white" alt="Project Page"></a>
+  <a href="https://arxiv.org/abs/2604.20987"><img src="https://img.shields.io/badge/arXiv-2604.20987-B31B1B?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://github.com/wuxiyang1996/cos-play"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Cold--Start%20Data-FFD21E" alt="HuggingFace Dataset"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT"></a>
 </p>
 
 This repository is the official codebase for our paper:
