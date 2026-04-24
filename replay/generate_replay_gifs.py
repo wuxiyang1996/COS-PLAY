@@ -1932,6 +1932,47 @@ def _uniform_frames(frames: List[Image.Image]) -> List[Image.Image]:
     return result
 
 
+def _write_gif_ffmpeg(frames: List[Image.Image], out_path: Path, fps: float) -> None:
+    """Encode frames to GIF via ffmpeg's palettegen/paletteuse filters.
+
+    PIL's default GIF writer quantises each frame with a tiny adaptive palette,
+    which badly distorts the carefully-chosen tetromino / board colours (the
+    familiar "strange colour" look in best_tetris.gif). ffmpeg's two-pass
+    palettegen(stats_mode=diff) + paletteuse(dither=bayer) preserves the exact
+    palette from the RGB frames, matching the mp4's colours.
+    """
+    import subprocess
+    import tempfile
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_exe = "ffmpeg"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        frames_dir = tmp / "frames"
+        frames_dir.mkdir()
+        for i, f in enumerate(frames):
+            f.save(frames_dir / f"f{i:06d}.png")
+        palette = tmp / "palette.png"
+
+        input_pattern = str(frames_dir / "f%06d.png")
+        subprocess.run(
+            [ffmpeg_exe, "-y", "-framerate", str(fps), "-i", input_pattern,
+             "-vf", "palettegen=stats_mode=diff",
+             "-update", "1", "-frames:v", "1", str(palette)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [ffmpeg_exe, "-y", "-framerate", str(fps), "-i", input_pattern,
+             "-i", str(palette),
+             "-lavfi", "paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+             "-loop", "0", str(out_path)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+
 def generate_replay(game: str, experiences: list, out_path: Path,
                     fps: float = 2.0, fmt: str = "mp4",
                     controlled_power: Optional[str] = None):
@@ -1943,9 +1984,7 @@ def generate_replay(game: str, experiences: list, out_path: Path,
     uniform = _uniform_frames(frames)
 
     if fmt == "gif":
-        duration_ms = int(1000 / fps)
-        uniform[0].save(out_path, save_all=True, append_images=uniform[1:],
-                        duration=duration_ms, loop=0)
+        _write_gif_ffmpeg(uniform, out_path, fps=fps)
     else:
         import imageio
         writer = imageio.get_writer(str(out_path), fps=fps, codec="libx264",
