@@ -1,10 +1,20 @@
-# COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Game Play
+# COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Tasks
+
+<p align="center">
+  <a href="https://wuxiyang1996.github.io/COSPLAY_page/"><img src="https://img.shields.io/badge/Project-Page-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Project Page"></a>
+  <a href="https://arxiv.org/abs/2604.20987"><img src="https://img.shields.io/badge/arXiv-2604.20987-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://github.com/wuxiyang1996/cos-play"><img src="https://img.shields.io/badge/Code-GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Cold--Start%20Data-FFD21E?style=for-the-badge" alt="HuggingFace Dataset"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+</p>
 
 This repository is the official codebase for our paper:
 
-**COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Game Play**
+**[COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Tasks](https://arxiv.org/abs/2604.20987)**
 
-**Paper:** [arXiv](https://arxiv.org/abs/XXXX.XXXXX)
+Xiyang Wu, Zongxia Li, Guangyao Shi, Alexander Duffy, Tyler Marques, Matthew Lyle Olson, Tianyi Zhou, Dinesh Manocha
+
+[**Project Page**](https://wuxiyang1996.github.io/COSPLAY_page/) · [**Paper (arXiv)**](https://arxiv.org/abs/2604.20987) · [**Code**](https://github.com/wuxiyang1996/cos-play) · [**Cold-Start Data**](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
 
 COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves skills from a learnable skill bank to guide action taking, while an agent-managed skill pipeline discovers reusable skills from the agent's unlabeled rollouts. Built on Qwen3-8B, COS-PLAY achieves over **25.1% average reward improvement** against four frontier LLM baselines on single-player game benchmarks while remaining competitive on multi-player social reasoning games.
 
@@ -600,11 +610,14 @@ This repository builds on the following open-source projects:
 # Citation
 
 ```bibtex
-@inproceedings{wu2026cosplay,
-  title={Co-Evolving {LLM} Decision and Skill Bank Agents for Long-Horizon Game Play},
-  author={Wu, Xiyang and others},
-  booktitle={Conference on Language Modeling (COLM)},
-  year={2026}
+@misc{wu2026coevolvingllmdecisionskill,
+  title={Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Tasks},
+  author={Xiyang Wu and Zongxia Li and Guangyao Shi and Alexander Duffy and Tyler Marques and Matthew Lyle Olson and Tianyi Zhou and Dinesh Manocha},
+  year={2026},
+  eprint={2604.20987},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2604.20987},
 }
 ```
 
