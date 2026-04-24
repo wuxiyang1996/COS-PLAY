@@ -4,6 +4,7 @@
   <a href="https://wuxiyang1996.github.io/COSPLAY_page/"><img src="https://img.shields.io/badge/Project-Page-4285F4?logo=googlechrome&logoColor=white" alt="Project Page"></a>
   <a href="https://arxiv.org/abs/2604.20987"><img src="https://img.shields.io/badge/arXiv-2604.20987-B31B1B?logo=arxiv&logoColor=white" alt="arXiv"></a>
   <a href="https://github.com/wuxiyang1996/cos-play"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://huggingface.co/IntelligenceLab/COS-PLAY"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Model-FFD21E" alt="HuggingFace Model"></a>
   <a href="https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Cold--Start%20Data-FFD21E" alt="HuggingFace Dataset"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT"></a>
 </p>
@@ -14,7 +15,7 @@ This repository is the official codebase for our paper:
 
 Xiyang Wu, Zongxia Li, Guangyao Shi, Alexander Duffy, Tyler Marques, Matthew Lyle Olson, Tianyi Zhou, Dinesh Manocha
 
-[**Project Page**](https://wuxiyang1996.github.io/COSPLAY_page/) · [**Paper (arXiv)**](https://arxiv.org/abs/2604.20987) · [**Code**](https://github.com/wuxiyang1996/cos-play) · [**Cold-Start Data**](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
+[**Project Page**](https://wuxiyang1996.github.io/COSPLAY_page/) · [**Paper (arXiv)**](https://arxiv.org/abs/2604.20987) · [**Code**](https://github.com/wuxiyang1996/cos-play) · [**Model**](https://huggingface.co/IntelligenceLab/COS-PLAY) · [**Cold-Start Data**](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
 
 COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves skills from a learnable skill bank to guide action taking, while an agent-managed skill pipeline discovers reusable skills from the agent's unlabeled rollouts. Built on Qwen3-8B, COS-PLAY achieves over **25.1% average reward improvement** against four frontier LLM baselines on single-player game benchmarks while remaining competitive on multi-player social reasoning games.
 
