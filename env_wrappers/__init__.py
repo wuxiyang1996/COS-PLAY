@@ -46,7 +46,7 @@ from env_wrappers.orak_nl_wrapper import (
     make_orak_env,
 )
 
-from env_wrappers.tetris_macro_wrapper import TetrisMacroWrapper
+from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
 
 from env_wrappers.game_configs import (
     GAME_CONFIGS,
@@ -80,7 +80,7 @@ __all__ = [
     "OrakNLWrapper",
     "make_orak_env",
     # Tetris Macro
-    "TetrisMacroWrapper",
+    "TetrisMacroActionWrapper",
     # Game configs & Gymnasium adapters
     "GAME_CONFIGS",
     "GameConfig",

@@ -55,4 +55,66 @@ python generate_replay_gifs.py --source all --format mp4
 
 # Generate only per-player replays from training runs
 python generate_replay_gifs.py --source per-player --format mp4
+
+# Generate an avg_<tag>_<game> baseline replay from a baseline output dir
+# (requires the baseline script to save `state` per step, see note below)
+python generate_replay_gifs.py --source baseline \
+    --baseline-dir ../baselines/output/gpt54_tetris \
+    --baseline-game tetris --baseline-tag gpt54 --format gif
 ```
+
+**Note on `avg_gpt54_*` replays.** These require the baseline episode JSONs to
+contain the per-step `state` observation text, not just `board_stats`. Without
+the state text the Tetris frames fall back to `render_tetris_stats`, which
+drives a simplified `TetrisBoardSim` and can diverge from the real game
+(garbage rows are invisible, line clears don't always match, etc.).
+
+### `stack_height` semantics (why 23 is legal on a 20-row board)
+
+`TetrisEnv` builds its internal board via
+`np.pad(board, ((0, padding), (padding, padding)), constant_values=WALL)`,
+which places `padding=4` rows **below** the playfield as a bottom wall
+(plus 4 columns of left/right wall). The env's `_max_col_height()` measures
+the tallest column over the *entire* padded board — including those 4 wall
+rows — so the raw `stack_height` in `board_stats` has range `[4, 24]`:
+
+| raw `stack_height` | meaning                                                |
+|--------------------|--------------------------------------------------------|
+| 4                  | empty playfield (only bottom wall is "occupied")       |
+| 4 + *k*            | tallest piece column is *k* rows tall                  |
+| 23                 | tallest piece column occupies 19/20 playfield rows     |
+| 24                 | piece column reaches the top spawn row — topout imminent |
+
+Game-over is triggered only when `_spawn_tetromino()` cannot place a new
+piece at `y=0` (see `tetrisEnv.py`), which is why `stack_height` can legally
+reach 23–24 without the episode ending — a piece is stuck almost at the
+spawn row but the spawn column itself is still clear.
+
+### What `render_tetris_stats` does about it
+
+`TetrisBoardSim.sync_with_real()` now translates the raw value and anchors
+the sim on every step:
+
+1. Subtract `TETRIS_PAD_H = 4` to get the real *piece-stack* height, then
+   truncate the sim's top so visible max column height ≤ `piece_stack` ≤ 20.
+   The rendered board never towers higher than the real playfield.
+2. Always advance the sim's internal line-clear counter to match the real
+   env's `lines_total` (upward only) so the sim doesn't "re-clear" history.
+3. If the sim's total filled-cell count exceeds the expected budget
+   (`sim_placements*4 - lines_total*10`) by more than ~1 row, drop its
+   densest rows to shed phantom cells accumulated from imperfect clears.
+
+The sidebar shows:
+- `STACK   19/20  raw 23 (+4 wall)` — derived piece-stack and raw env value
+- `TOPOUT! spawn blocked soon` — red warning when `piece_stack >= 19`
+
+Both labels come straight from `board_stats`, so the numbers always match
+the real env; the rendered board may under-represent the stack (it can
+never over-represent it).
+
+### Fully accurate path
+
+`baselines/run_gpt54_tetris_macro.py` persists the per-step `state` text,
+so re-running the baseline and invoking `--source baseline` yields a
+replay rendered by the same `render_tetris_env` path as `best_tetris.gif`,
+which is strictly more accurate than the synced fallback above.

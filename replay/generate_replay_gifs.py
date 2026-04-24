@@ -35,7 +35,18 @@ REPLAY_DIR = Path(__file__).parent / "replays"
 # ═══════════════════════════════════════════════════════════════════════════
 
 TETRIS_SYM_TO_ID = {".": 0, "#": 1, "I": 2, "O": 3, "T": 4, "S": 5, "Z": 6, "J": 7, "L": 8}
-TETRIS_W, TETRIS_H = 10, 20
+TETRIS_W, TETRIS_H = 10, 20          # visible playfield (real state text is 20 rows)
+
+# TetrisEnv builds its internal board as np.pad(board, ((0, padding),
+# (padding, padding)), constant_values=WALL). So the `padding` rows sit
+# BELOW the playfield as a bottom wall (not above it), and the env's
+# `_max_col_height()` reports the tallest column over the *padded* board,
+# which means it *includes* those 4 wall rows. Consequently the raw
+# `stack_height` value in `board_stats` ranges from 4 (empty playfield,
+# walls only) to 24 (playfield full to the spawn row). To render faithfully
+# we must subtract this offset before clamping to the visible 20-row grid.
+TETRIS_PAD_H = 4                     # bottom wall rows included in stack_height
+TETRIS_STACK_MIN = TETRIS_PAD_H      # minimum raw stack_height (empty playfield)
 
 
 def parse_tetris_board(state_text: str) -> Optional[np.ndarray]:
@@ -265,10 +276,19 @@ TETRIS_SYM_TO_COLOR_ID = {"I": 2, "O": 3, "T": 4, "S": 5, "Z": 6, "J": 7, "L": 8
 
 
 class TetrisBoardSim:
-    """Simulates a tetris board by placing macro-action pieces one at a time."""
+    """Simulates a tetris board by placing macro-action pieces one at a time.
+
+    The simulator is intentionally simplistic (no garbage rows, no spawn
+    constraints, no SRS kicks) and will diverge from the real TetrisEnv
+    after many steps. Use :meth:`sync_with_real` after each placement to
+    clamp the simulator's visible state to the real env's `board_stats`
+    so the rendered gif stays faithful to what actually happened.
+    """
 
     def __init__(self):
         self.grid = np.zeros((TETRIS_H, TETRIS_W), dtype=int)
+        self.sim_lines_cleared = 0  # cumulative lines cleared inside the sim
+        self.sim_placements = 0     # cumulative pieces placed by the sim
 
     def place(self, piece: str, orient: str, col: int) -> int:
         shape = TETRIS_ORIENTED_SHAPES.get((piece, orient))
@@ -295,12 +315,17 @@ class TetrisBoardSim:
             else:
                 break
 
+        placed_any = False
         for ri, srow in enumerate(shape):
             for ci, val in enumerate(srow):
                 if val:
                     c = col + ci
                     if 0 <= c < TETRIS_W and 0 <= land_row + ri < TETRIS_H:
                         self.grid[land_row + ri, c] = cid
+                        placed_any = True
+
+        if placed_any:
+            self.sim_placements += 1
 
         cleared = 0
         new_rows = []
@@ -312,7 +337,94 @@ class TetrisBoardSim:
         if cleared > 0:
             empty = [np.zeros(TETRIS_W, dtype=int) for _ in range(cleared)]
             self.grid = np.array(empty + new_rows)
+        self.sim_lines_cleared += cleared
         return cleared
+
+    # ─────────────────────────── stats-first sync ───────────────────────────
+
+    def _sim_max_height(self) -> int:
+        """Current max column height in the simulator (0..TETRIS_H)."""
+        for r in range(TETRIS_H):
+            if np.any(self.grid[r] != 0):
+                return TETRIS_H - r
+        return 0
+
+    def _drop_densest_rows(self, n: int) -> None:
+        """Remove up to `n` rows that are most likely to have been cleared by
+        the real game but were missed by the simulator. Preference: higher
+        cell count first, then lower (bottom-most) row first as a tiebreak.
+        Remaining rows shift down so empty rows appear on top.
+        """
+        if n <= 0:
+            return
+        fills = [(int(np.sum(self.grid[r] != 0)), r) for r in range(TETRIS_H)]
+        # Only consider rows that have at least one filled cell; clearing empty
+        # rows is a no-op that wastes the quota.
+        fills = [fr for fr in fills if fr[0] > 0]
+        if not fills:
+            return
+        # Densest first; among equals prefer lower rows (r larger).
+        fills.sort(key=lambda fr: (-fr[0], -fr[1]))
+        to_remove = {r for _, r in fills[:n]}
+        kept = [self.grid[r].copy() for r in range(TETRIS_H) if r not in to_remove]
+        empty = [np.zeros(TETRIS_W, dtype=int) for _ in range(len(to_remove))]
+        self.grid = np.array(empty + kept)
+
+    def _truncate_top(self, max_visible_height: int) -> None:
+        """Keep only the bottom `max_visible_height` rows of content; zero out
+        everything above.
+        """
+        max_visible_height = max(0, min(TETRIS_H, max_visible_height))
+        keep_from_row = TETRIS_H - max_visible_height
+        for r in range(keep_from_row):
+            self.grid[r, :] = 0
+
+    def sync_with_real(self, real_lines_total: int,
+                       real_stack_height: Optional[int] = None) -> None:
+        """Align the simulator's visible state with the real env's stats.
+
+        The env's raw ``stack_height`` is reported over its *padded* board,
+        so it includes ``TETRIS_PAD_H`` bottom-wall rows. We subtract that
+        offset to recover the piece-only stack height, which is what the
+        rendered 20-row playfield should match.
+
+        Two anchors are applied (in order):
+          1. **Max column height**: if the sim's tallest column exceeds the
+             real piece-stack, truncate the top so the rendered board never
+             looks taller than reality.
+          2. **Filled-cell budget**: the real env has left roughly
+             ``placements*4 - lines_total*10`` cells on the padded board
+             after play. If the sim has significantly more than that
+             (sim's simple drop logic tends to miss line clears), drop its
+             densest rows until filled-cell count is within tolerance.
+        """
+        # Always mirror the real env's cumulative line-clear count upward
+        # (never downward). The sim may miss real clears so this keeps it
+        # monotonically consistent with what the env actually saw.
+        self.sim_lines_cleared = max(self.sim_lines_cleared,
+                                     int(real_lines_total))
+
+        if real_stack_height is not None:
+            piece_stack = max(0, int(real_stack_height) - TETRIS_PAD_H)
+            visible_h = min(piece_stack, TETRIS_H)
+            if self._sim_max_height() > visible_h:
+                self._truncate_top(visible_h)
+
+        # Filled-cell budget: expected remaining cells on the 20-row
+        # playfield ≈ sim_placements*4 - real_lines_total*10, clamped to
+        # [0, TETRIS_H * TETRIS_W]. Allow a tolerance of 10 cells (one
+        # full row) before we start pruning, so occasional clear-mismatches
+        # don't visibly wipe the board.
+        sim_filled = int(np.sum(self.grid != 0))
+        expected = int(self.sim_placements) * 4 - int(real_lines_total) * 10
+        expected = max(0, min(TETRIS_H * TETRIS_W, expected))
+        excess_cells = sim_filled - (expected + 10)
+        if excess_cells > 0:
+            # Estimate how many rows to drop: assume ~6 cells per row of
+            # actual play (partial fills). Drop at most enough rows to
+            # bring excess back under tolerance.
+            rows_to_drop = max(1, excess_cells // 6)
+            self._drop_densest_rows(rows_to_drop)
 
 
 _tetris_sim: Optional[TetrisBoardSim] = None
@@ -354,6 +466,22 @@ def render_tetris_stats(board_stats: dict, step: int, reward: float,
                     if val:
                         placed_cells.append((land_row + ri, col_str + ci))
         _tetris_sim.place(piece, orient, col_str)
+
+    # Stats-first sync: clamp the visible board so it never contradicts the
+    # real env's line-clear count / stack height. Without this the simulator's
+    # drop/line-clear logic diverges and we get "64 lines cleared but the
+    # board is still full" or stack_height > 20 stacks that look illegal.
+    real_lines = int(board_stats.get("lines_total", 0))
+    real_stack = board_stats.get("stack_height")
+    _tetris_sim.sync_with_real(
+        real_lines_total=real_lines,
+        real_stack_height=int(real_stack) if real_stack is not None else None,
+    )
+    placed_set_sync = set()
+    for (r, c) in placed_cells:
+        if 0 <= r < TETRIS_H and 0 <= c < TETRIS_W and _tetris_sim.grid[r, c] != 0:
+            placed_set_sync.add((r, c))
+    placed_cells = list(placed_set_sync)
 
     cell = 24
     pad = 8
@@ -441,18 +569,37 @@ def render_tetris_stats(board_stats: dict, step: int, reward: float,
         sy += 14
     sy += 10
 
+    # STACK: the env reports `stack_height` over its *padded* board, so the
+    # raw number includes TETRIS_PAD_H (=4) bottom wall rows. Show both the
+    # raw value (same as what the agent/env sees) and the derived
+    # piece-only stack height (which is what's actually rendered on the
+    # 20-row playfield) so the viewer can't misread '23' as 'impossible'.
+    raw_stack = int(board_stats.get("stack_height", 0))
+    piece_stack = max(0, raw_stack - TETRIS_PAD_H)
+    near_topout = piece_stack >= TETRIS_H - 1          # top spawn row about to block
+    stack_color = (255, 120, 120) if near_topout else (255, 255, 255)
     draw.text((sx, sy), "STACK", fill=(160, 160, 180), font=fnt_label)
     sy += 16
-    draw.text((sx, sy), str(board_stats.get("stack_height", 0)),
-              fill=(255, 255, 255), font=fnt_value)
-    sy += 24
+    draw.text((sx, sy), f"{piece_stack}/{TETRIS_H}",
+              fill=stack_color, font=fnt_value)
+    sy += 15
+    draw.text((sx, sy), f"raw {raw_stack} (+{TETRIS_PAD_H} wall)",
+              fill=(140, 140, 160), font=fnt_small)
+    sy += 18
 
     draw.text((sx, sy), "HOLES", fill=(160, 160, 180), font=fnt_label)
     sy += 16
     holes = board_stats.get("holes", 0)
     draw.text((sx, sy), str(holes),
               fill=(255, 200, 100) if holes > 0 else (255, 255, 255), font=fnt_value)
-    sy += 30
+    sy += 24
+
+    if near_topout:
+        draw.text((sx, sy), "TOPOUT!", fill=(255, 90, 90), font=fnt_label)
+        sy += 14
+        draw.text((sx, sy), "spawn blocked soon",
+                  fill=(220, 150, 150), font=fnt_small)
+        sy += 16
 
     sy = by + board_h - 50
     draw.text((sx, sy), "REWARD", fill=(160, 160, 180), font=fnt_label)
@@ -1369,8 +1516,59 @@ def find_best_episodes() -> Dict[str, Dict[str, Any]]:
 
 
 def load_episode(path: str):
-    with open(path) as f:
-        return json.load(f)["experiences"]
+    # utf-8-sig transparently strips a BOM if one is present (some recovered
+    # baseline episode JSONs on Windows were written with a BOM by PowerShell).
+    with open(path, encoding="utf-8-sig") as f:
+        data = json.load(f)
+    # Training / inference rollouts store experiences; baseline scripts store step_details.
+    if "experiences" in data:
+        return data["experiences"]
+    if "step_details" in data:
+        return [
+            {
+                "state": s.get("state", ""),
+                "action": s.get("action", "?"),
+                "reward": s.get("reward", 0.0),
+                "board_stats": s.get("board_stats"),
+            }
+            for s in data["step_details"]
+        ]
+    raise KeyError(f"{path} has neither 'experiences' nor 'step_details'")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Baseline (avg_<model>_<game>) replay helper
+# ─────────────────────────────────────────────────────────────────────────
+
+def find_avg_baseline_episode(baseline_dir: Path) -> Optional[Dict[str, Any]]:
+    """Pick the episode whose total_reward is closest to the mean in
+    `<baseline_dir>/reward_summary.json`. Returns dict with 'episode_path',
+    'episode_index', 'reward', 'steps'."""
+    summary = baseline_dir / "reward_summary.json"
+    if not summary.exists():
+        return None
+    with open(summary, encoding="utf-8-sig") as f:
+        data = json.load(f)
+    episodes = data.get("episodes", [])
+    rewards = [e.get("total_reward", 0.0) for e in episodes if "error" not in e]
+    if not rewards:
+        return None
+    mean_r = sum(rewards) / len(rewards)
+    chosen = min(
+        (e for e in episodes if "error" not in e),
+        key=lambda e: abs(e.get("total_reward", 0.0) - mean_r),
+    )
+    ep_idx = chosen.get("episode_index", 0)
+    ep_path = baseline_dir / f"episode_{ep_idx:03d}.json"
+    if not ep_path.exists():
+        return None
+    return {
+        "episode_path": str(ep_path),
+        "episode_index": ep_idx,
+        "reward": chosen.get("total_reward", 0.0),
+        "steps": chosen.get("steps", 0),
+        "mean_reward": mean_r,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1764,9 +1962,10 @@ def generate_replay(game: str, experiences: list, out_path: Path,
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate replay videos from best episodes")
-    parser.add_argument("--source", choices=["output", "runs", "per-player", "all"], default="all",
+    parser.add_argument("--source", choices=["output", "runs", "per-player", "all", "baseline"], default="all",
                         help="Episode source: 'output' (inference), 'runs' (training checkpoints), "
                              "'per-player' (one replay per Avalon role / Diplomacy power), "
+                             "'baseline' (avg-reward episode from baselines/output/<model>_<game>/), "
                              "or 'all' (inference output for visual games + per-player for avalon/diplomacy)")
     parser.add_argument("--format", choices=["mp4", "gif"], default="mp4",
                         help="Output format: mp4 (default, better quality/size) or gif")
@@ -1774,6 +1973,13 @@ def main():
                         help="Override OUTPUT_DIR for inference episode discovery")
     parser.add_argument("--runs-dir", type=str, default=None,
                         help="Override RUNS_DIR for training checkpoint discovery")
+    parser.add_argument("--baseline-dir", type=str, default=None,
+                        help="Baseline episode directory (e.g. baselines/output/gpt54_tetris). "
+                             "Used together with --source baseline.")
+    parser.add_argument("--baseline-game", type=str, default=None,
+                        help="Game name for baseline replay (e.g. tetris, twenty_forty_eight).")
+    parser.add_argument("--baseline-tag", type=str, default="gpt54",
+                        help="Tag used in output filename avg_<tag>_<game>.<ext> (default 'gpt54').")
     args = parser.parse_args()
 
     global OUTPUT_DIR, RUNS_DIR
@@ -1901,6 +2107,37 @@ def main():
                 import traceback
                 print(f"  [!] {key} failed: {exc}")
                 traceback.print_exc()
+
+    elif args.source == "baseline":
+        if not args.baseline_dir or not args.baseline_game:
+            parser.error("--source baseline requires --baseline-dir and --baseline-game")
+        baseline_dir = Path(args.baseline_dir)
+        if not baseline_dir.exists():
+            parser.error(f"baseline-dir does not exist: {baseline_dir}")
+        game = args.baseline_game
+        info = find_avg_baseline_episode(baseline_dir)
+        if info is None:
+            parser.error(f"No usable episodes found in {baseline_dir}")
+
+        print("=" * 72)
+        print(f"BASELINE REPLAY  (avg episode from {baseline_dir})")
+        print("=" * 72)
+        print(f"  mean reward: {info['mean_reward']:.1f}")
+        print(f"  chosen  ep : #{info['episode_index']}  reward {info['reward']:.1f}  "
+              f"steps {info['steps']}")
+        print(f"  episode    : {info['episode_path']}")
+        print()
+
+        experiences = load_episode(info["episode_path"])
+        out = REPLAY_DIR / f"avg_{args.baseline_tag}_{game}.{ext}"
+        fps = 3.0 if game in ("tetris", "candy_crush", "twenty_forty_eight") else 1.5
+        print(f"Rendering {out.name} ...")
+        try:
+            generate_replay(game, experiences, out, fps=fps, fmt=ext)
+        except Exception as exc:
+            import traceback
+            print(f"  [!] failed: {exc}")
+            traceback.print_exc()
 
     elif args.source == "runs":
         best = find_best_episodes_from_runs()

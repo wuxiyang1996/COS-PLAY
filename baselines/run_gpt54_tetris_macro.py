@@ -132,7 +132,11 @@ def gpt54_choose_placement(
 
     try:
         client = openai.OpenAI(**client_kw)
-        response = client.chat.completions.create(
+        # GPT-5.x family only accepts `max_completion_tokens` (not `max_tokens`)
+        # and rejects non-default `temperature`. Fall back to the legacy kwargs
+        # for older models (e.g. gpt-4o) via openrouter.
+        is_gpt5 = effective_model.startswith("gpt-5") or effective_model.endswith("gpt-5.4")
+        create_kwargs: Dict[str, Any] = dict(
             model=effective_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -140,9 +144,13 @@ def gpt54_choose_placement(
             ],
             tools=tools,
             tool_choice={"type": "function", "function": {"name": "choose_action"}},
-            temperature=temperature,
-            max_tokens=48,
         )
+        if is_gpt5:
+            create_kwargs["max_completion_tokens"] = 512
+        else:
+            create_kwargs["max_tokens"] = 48
+            create_kwargs["temperature"] = temperature
+        response = client.chat.completions.create(**create_kwargs)
         msg = response.choices[0].message
 
         if msg.tool_calls and len(msg.tool_calls) > 0:
@@ -204,6 +212,9 @@ def run_episode(
         if not action_names:
             break
 
+        # Snapshot the state text BEFORE stepping so it matches the action taken.
+        state_before = obs_nl
+
         action, reasoning = gpt54_choose_placement(
             state_nl=obs_nl,
             action_names=action_names,
@@ -218,6 +229,7 @@ def run_episode(
 
         step_info = {
             "step": step_count,
+            "state": state_before,
             "action": action,
             "reward": float(reward),
             "cumulative_reward": total_reward,

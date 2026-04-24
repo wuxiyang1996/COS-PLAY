@@ -28,7 +28,34 @@ import numpy as np
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _CODEBASE_ROOT = _SCRIPT_DIR.parent
-_GAMINGAGENT_ROOT = _CODEBASE_ROOT.parent / "GamingAgent"
+
+
+def _locate_gamingagent_root() -> Path:
+    """Find the GamingAgent package root.
+
+    Resolution order:
+      1. $GAMINGAGENT_ROOT (explicit override)
+      2. <repo>/../GamingAgent                 (original layout)
+      3. <repo>/../codebase/GamingAgent        (this workspace layout)
+    Returns the first existing candidate, or the original default so that
+    downstream error messages still point somewhere meaningful.
+    """
+    env_override = os.environ.get("GAMINGAGENT_ROOT")
+    if env_override:
+        p = Path(env_override)
+        if p.exists():
+            return p
+    candidates = [
+        _CODEBASE_ROOT.parent / "GamingAgent",
+        _CODEBASE_ROOT.parent / "codebase" / "GamingAgent",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[0]
+
+
+_GAMINGAGENT_ROOT = _locate_gamingagent_root()
 
 for _p in [str(_CODEBASE_ROOT), str(_GAMINGAGENT_ROOT)]:
     if Path(_p).exists() and _p not in sys.path:
