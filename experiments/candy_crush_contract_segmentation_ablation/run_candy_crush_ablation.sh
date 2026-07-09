@@ -11,8 +11,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 VARIANT="full"
-TOTAL_STEPS=60
+TOTAL_STEPS=10
 EPISODES_PER_GAME=8
+CHECKPOINT_INTERVAL=3
 SEED=0
 RUN_ROOT="runs/candy_crush_contract_segmentation_ablation"
 DRY_RUN=0
@@ -35,6 +36,7 @@ Variants:
 Common flags:
   --total-steps N
   --episodes-per-game N
+  --checkpoint-interval N
   --seed N
   --run-root DIR
   --dry-run
@@ -48,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         --variant) VARIANT="$2"; shift 2 ;;
         --total-steps) TOTAL_STEPS="$2"; shift 2 ;;
         --episodes-per-game) EPISODES_PER_GAME="$2"; shift 2 ;;
+        --checkpoint-interval) CHECKPOINT_INTERVAL="$2"; shift 2 ;;
         --seed) SEED="$2"; shift 2 ;;
         --run-root) RUN_ROOT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -103,6 +106,7 @@ CMD=(
     --total-steps "$TOTAL_STEPS"
     --episodes-per-game "$EPISODES_PER_GAME"
     --episodes-per-game-overrides '{}'
+    --checkpoint-interval "$CHECKPOINT_INTERVAL"
     --run-dir "$RUN_DIR"
     --harness-enabled
     --harness-mode full
@@ -112,6 +116,7 @@ CMD=(
 
 echo "[ablation] variant=$VARIANT"
 echo "[ablation] run_dir=$RUN_DIR"
+echo "[ablation] PDF setting: total_steps=$TOTAL_STEPS episodes_per_game=$EPISODES_PER_GAME checkpoint_interval=$CHECKPOINT_INTERVAL max_steps=50"
 echo "[ablation] COSPLAY_CC_EFFECT_CONTRACT_MODE=$COSPLAY_CC_EFFECT_CONTRACT_MODE"
 echo "[ablation] COSPLAY_CC_CONTRACT_MATCHING=$COSPLAY_CC_CONTRACT_MATCHING"
 echo "[ablation] COSPLAY_CC_CONTRACT_COMPLETION_REWARD=$COSPLAY_CC_CONTRACT_COMPLETION_REWARD"

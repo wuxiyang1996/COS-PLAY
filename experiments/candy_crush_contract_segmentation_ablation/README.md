@@ -7,6 +7,18 @@ The experiments are intentionally single-game first (`candy_crush`) so
 the comparison answers mechanism questions without cross-game transfer
 confounds.
 
+## Paper-Matched Setting
+
+The launcher defaults follow the Candy Crush co-evolution setting in
+`EMNLP_2026_Co_evolving_Agent__Copy_.pdf`, Table 4:
+
+- `total_steps=10`
+- `episodes_per_game=8`
+- `checkpoint_interval=3`
+- `max_steps_per_episode=50` through the existing Candy Crush game config
+- GRPO defaults: learning rate `5e-5`, KL `0.05`, clip ratio `0.20`,
+  max epochs `4`, no advantage clipping
+
 ## Core Questions
 
 1. Is the predicate-level effect contract necessary, or is the natural

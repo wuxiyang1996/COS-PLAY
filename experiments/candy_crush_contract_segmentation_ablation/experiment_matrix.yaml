@@ -6,8 +6,9 @@
 
 game: candy_crush
 default_budget:
-  total_steps: 60
+  total_steps: 10
   episodes_per_game: 8
+  checkpoint_interval: 3
   max_steps_per_episode: 50
   seeds: [0, 1, 2]
 
@@ -21,6 +22,11 @@ shared_controls:
   crafter_enabled: true
   promotion_bypass_mode: gated
   intention_trigger: every-step
+  grpo_lr: 5.0e-5
+  grpo_kl_coeff: 0.05
+  grpo_clip_ratio: 0.20
+  grpo_max_epochs: 4
+  grpo_adv_clip: null
 
 variants:
   full:
