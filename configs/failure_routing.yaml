@@ -1,0 +1,240 @@
+# Failure-class → Crafter-mode routing table.
+#
+# Spec sources:
+#   - implementation_notes/legacy/skill-lane-decision.md §3.5  (lane-(a) taxonomy)
+#   - implementation_notes/pre-training-readiness-audit.md §0.4 / §3 (T2.5)
+#   - crafter/service.py::_run_failure_dispatch  (live dispatch loop)
+#   - data_structure/extensions/failure_trace.py  (FailureTrace.failure_class
+#     is a free-form ``str`` today; no Python enum exists)
+#
+# Lane-(a) decision (skill = retrieval payload) parks the protocol-edit
+# Repairer behind ``SkillCrafterService(enable_protocol_patching=False)``
+# and replaces the six-strategy taxonomy with a retrieval-centric one.
+# This file is the canonical map from the live FailureClass to the
+# Crafter mode that handles it.
+#
+# Modes:
+#   - hypothesizer  — propose a new skill (the lane-(a) bank-gap response)
+#   - composer      — merge co-occurring skills (cross-episode signal)
+#   - generalizer   — widen feasible_domains on an existing skill
+#   - retirer       — emit a RetireProposal (subsumption / persistent failure)
+#   - repairer      — emit a PatchProposal (lane-(b) only — gated off by
+#                     default in the live trainer; offline drivers only)
+#   - drop          — record the failure to memory/audit only; no proposal
+#
+# Versioning: bump `policy_version` on every change. The crafter writes
+# this version into every proposal's `policy_version` slot so the
+# audit log can attribute proposal volume to the active routing
+# policy.
+
+policy_version: "v1.0.0"
+
+# ── Lane-(a) FailureClass taxonomy (new) ─────────────────────────────
+# These are the three retrieval-centric classes introduced in
+# `implementation_notes/legacy/skill-lane-decision.md` §3.5. The synthesis
+# layer (trainer/coevolution/_crafter_hook._synthesize_failures and
+# the offline reflect_per_episode_gpt54 driver) emits these on top
+# of the harness-derived classes below.
+lane_a_taxonomy:
+  BANK_GAP:
+    description: |
+      The actor needed a skill the bank does not contain. Retrieval
+      returned no payload, or returned only stale ones. Lane-(a) response
+      is to mint a fresh skill via the Hypothesizer.
+    primary_mode: hypothesizer
+    secondary_modes: [composer]
+    severity: high
+    promote_after_n_observations: 1
+
+  RETRIEVAL_MISLEAD:
+    description: |
+      Retrieval surfaced a skill whose contract / preconditions matched
+      but whose runtime behavior in this state was inappropriate. The
+      payload is wrong-for-context, not wrong-in-content. Lane-(a)
+      response is to compose with an adjacent skill (composer) or
+      generalize an existing one (generalizer).
+    primary_mode: composer
+    secondary_modes: [generalizer, hypothesizer]
+    severity: medium
+    promote_after_n_observations: 3
+
+  STALE_DESCRIPTION:
+    description: |
+      A skill's name / description / NLI fields no longer match the
+      contract it actually satisfies (drift after promotion). Lane-(a)
+      response is to retire the stale skill if a strict superset exists,
+      otherwise hypothesize a fresh one with corrected descriptors.
+    primary_mode: retirer
+    secondary_modes: [hypothesizer]
+    severity: medium
+    promote_after_n_observations: 2
+
+# ── Harness-derived FailureClass values (existing) ──────────────────
+# These are emitted by harness/skill_harness.py::_classify_abort and
+# carried in FailureTrace.failure_class verbatim. The dispatcher
+# treats any class not listed here as `OTHER` (fall-through to
+# Hypothesizer).
+harness_classes:
+  PRECONDITION_VIOLATION:
+    description: Contract precondition failed at bind time.
+    primary_mode: hypothesizer
+    secondary_modes: [generalizer]
+    severity: medium
+    promote_after_n_observations: 2
+
+  INVARIANT_VIOLATION:
+    description: |
+      A protocol invariant failed during execution (lane-(b) only).
+      Under lane-(a), this becomes a RETRIEVAL_MISLEAD signal upstream.
+    primary_mode: hypothesizer
+    secondary_modes: [composer]
+    severity: medium
+    promote_after_n_observations: 3
+    # Lane-(b) opt-in: when crafter_enable_protocol_patching=True
+    # the dispatcher routes this to repairer first.
+    lane_b_primary_mode: repairer
+
+  BUDGET_EXCEEDED:
+    description: Hop / token / wall-time budget tripped before completion.
+    primary_mode: drop
+    severity: low
+    promote_after_n_observations: 5
+
+  MISSING_ADAPTER:
+    description: |
+      Skill claims a domain whose adapter is not registered. Almost
+      always a configuration error, not a skill bug. Drop to memory
+      with a structured rationale; the Crafter does not act.
+    primary_mode: drop
+    severity: low
+    promote_after_n_observations: 3
+
+  ADAPTER_EXCEPTION:
+    description: Adapter raised at runtime (transient / I/O).
+    primary_mode: drop
+    severity: low
+    promote_after_n_observations: 5
+
+  OTHER:
+    description: Unclassified harness failure.
+    primary_mode: hypothesizer
+    severity: low
+    promote_after_n_observations: 3
+
+  UNKNOWN:
+    description: Synthesis layer could not classify.
+    primary_mode: drop
+    severity: low
+    promote_after_n_observations: 5
+
+# ── Synthesis-signal tags (extra/) ──────────────────────────────────
+# These are NOT failure_class values — they live in
+# FailureTrace.extra["synthesis_signal"] and are emitted by:
+#   - trainer/coevolution/_crafter_hook._synthesize_failures
+#   - labeling_supplement/reflect_per_episode_gpt54.py
+# They are routed identically to a same-named FailureClass when the
+# dispatcher sees them in `extra`.
+synthesis_signals:
+  OUTCOME_FAILURE:
+    description: Episode terminated with reward ≤ outcome_failure_threshold.
+    primary_mode: hypothesizer
+    secondary_modes: [composer]
+    severity: high
+    promote_after_n_observations: 1
+    # Maps to BANK_GAP under the lane-(a) taxonomy when the actor had
+    # no bank to bind from at all.
+    lane_a_alias: BANK_GAP
+
+  NO_SKILL_BOUND:
+    description: |
+      Actor stepped without binding any skill, despite skill_selection
+      being enabled and a non-empty bank existing on disk. Strong
+      BANK_GAP / RETRIEVAL_MISLEAD signal.
+    primary_mode: hypothesizer
+    severity: high
+    promote_after_n_observations: 1
+    lane_a_alias: BANK_GAP
+
+  EMPTY_QUERY:
+    description: Skill query was empty — usually a state-encoder regression.
+    primary_mode: drop
+    severity: low
+    promote_after_n_observations: 5
+
+  LOW_APPLICABILITY:
+    description: |
+      All retrieved skills' applicability scores fell below threshold.
+      Lane-(a) response is to compose / hypothesize; the existing bank
+      lacks coverage for this state cluster.
+    primary_mode: composer
+    secondary_modes: [hypothesizer]
+    severity: medium
+    promote_after_n_observations: 2
+    lane_a_alias: BANK_GAP
+
+  MISSING_EFFECTS:
+    description: |
+      Skill ran but post-state did not realize all `effects_add`. Strong
+      STALE_DESCRIPTION signal under lane-(a).
+    primary_mode: retirer
+    secondary_modes: [hypothesizer]
+    severity: medium
+    promote_after_n_observations: 2
+    lane_a_alias: STALE_DESCRIPTION
+
+# ── Cross-domain transfer-gate taxonomy (Layer A) ────────────────────
+# These classes are emitted by
+# `trainer/coevolution/_transfer_hook.run_transfer_gate_step` when
+# `crafter_transfer_gate_enabled=True`. They ride on the
+# `TransferSkillVerdict.failure_class` slot for every DEMOTE verdict
+# and are surfaced to the Crafter via the same routing surface as the
+# harness classes — the offline pipeline replays them through the
+# Repairer / Generalizer.
+#
+# Spec:  implementation_notes/coevolution-cross-domain-integration.md §4.5
+#
+# These are advisory entries today: the transfer hook *applies the
+# rollback inline* (drops the demoted skill_id from the per-game
+# bank.jsonl). The classes below are the contract by which the
+# Crafter's *next-step* dispatch consumes the demotion (e.g. when the
+# Generalizer mode reads `false_binding_patterns`).
+cross_domain_taxonomy:
+  CROSS_DOMAIN_ADMIT_FLOOR_VIOLATION:
+    description: |
+      Skill's offline cross-domain admit rate fell below
+      crafter_transfer_admit_band[0] on every configured target
+      (e.g. video / visual_reasoning / browser). Indicates the
+      skill is over-fit to a single domain's vocabulary or
+      precondition shape and should either be generalised
+      (widen feasible_domains, retry transfer) or retired.
+    primary_mode: generalizer
+    secondary_modes: [retirer]
+    severity: high
+    promote_after_n_observations: 1
+
+  CROSS_DOMAIN_PREDICATE_VOCAB_MISMATCH:
+    description: |
+      Skill's contract advertises predicates not in the
+      `harness.predicate_translator.PREDICATE_TRANSLATIONS` table
+      for the active source × target cell. Either the contract
+      needs a patch (lane-(b) repairer) or the table needs an
+      additional entry. Today this is detected post-hoc by
+      cross-checking eligibility-filter rejection reasons against
+      the translator audit; the failure class is a placeholder for
+      the dashboard layer to surface vocabulary gaps.
+    primary_mode: repairer
+    secondary_modes: [drop]
+    severity: medium
+    promote_after_n_observations: 2
+
+# ── Cross-cutting policy ────────────────────────────────────────────
+policy:
+  # When True, the dispatcher consults `lane_a_alias` first (under
+  # lane-(a) trainer default) and falls back to the harness class.
+  prefer_lane_a_alias: true
+  # When True, the Crafter emits a RetireProposal under
+  # subsumption-detection regardless of FailureClass routing.
+  subsumption_retire_always: true
+  # When True, dispatcher writes one structured `audit.jsonl` row
+  # per dispatched failure with kind=`failure_dispatch`.
+  audit_every_dispatch: true

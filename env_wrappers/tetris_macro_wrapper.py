@@ -117,9 +117,14 @@ class TetrisMacroActionWrapper:
             info["placement_metrics"] = None
 
         tenv = self._tetris_env
+        empty_val = tenv.base_pixels[0].value
         info["board_stats"] = {
-            "stack_height": tenv._max_col_height(),
-            "holes": tenv._board_holes(),
+            "stack_height": self._max_height(
+                tenv.board, tenv.padding, tenv.width, empty_val,
+            ),
+            "holes": self._count_holes(
+                tenv.board, tenv.padding, tenv.width, empty_val,
+            ),
             "lines_total": tenv.lines_cleared_total,
             "level": tenv.level,
             "score": tenv.current_score,
@@ -182,7 +187,7 @@ class TetrisMacroActionWrapper:
         h_pad = tenv.height_padded
         w_pad = tenv.width_padded
 
-        holes_before = tenv._board_holes()
+        holes_before = self._count_holes(board, pad, width, empty_val)
 
         # spawn_x is where the env placed the piece (for dx calculation)
         spawn_x = w_pad // 2 - tenv.active_tetromino.matrix.shape[1] // 2
@@ -446,9 +451,11 @@ class TetrisMacroActionWrapper:
             piece_name = PIECE_NAMES[tenv.active_tetromino_original_idx]
         next_names = [PIECE_NAMES[idx] for idx in tenv.piece_queue[:4]]
 
-        # Stats
-        stack_h = tenv._max_col_height()
-        holes = tenv._board_holes()
+        # Stats — derived from the padded board via the wrapper's own
+        # static helpers so we don't depend on private TetrisEnv methods
+        # (which exist in some GamingAgent forks but not the release branch).
+        stack_h = self._max_height(tenv.board, tenv.padding, tenv.width, empty_val)
+        holes = self._count_holes(tenv.board, tenv.padding, tenv.width, empty_val)
 
         # Column heights
         col_heights: List[int] = []

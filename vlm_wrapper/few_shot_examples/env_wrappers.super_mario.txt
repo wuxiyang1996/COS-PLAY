@@ -1,0 +1,82 @@
+<state>
+domain=gymv
+task=make_orak_env/super_mario
+goal=Super Mario Bros (NES, world 1-1). Move Mario right, jump over enemies (goombas, koopas) and pits, reach the flag at the end.
+step=3
+
+<entities>
+e1[type=region, label=level_view, bid=null, pos=0,0,256,240, ontology=navigable_region]
+e2[type=object, label=mario, bid=null, pos=122,45,16,16, ontology=tracked_entity]
+e3[type=object, label=brick, bid=null, pos=54,96,16,16, ontology=container_entity]
+e4[type=object, label=question_block, bid=null, pos=70,96,16,16, ontology=interactive_entity]
+e5[type=object, label=brick, bid=null, pos=86,96,16,16, ontology=container_entity]
+e6[type=object, label=question_block, bid=null, pos=86,160,16,16, ontology=interactive_entity]
+e7[type=object, label=question_block, bid=null, pos=102,96,16,16, ontology=interactive_entity]
+e8[type=object, label=brick, bid=null, pos=118,96,16,16, ontology=container_entity]
+e9[type=object, label=warp_pipe, bid=null, pos=183,63,31,31, ontology=blocking_entity]
+e10[type=region, label=ground, bid=null, pos=0,0,256,16, ontology=navigable_region]
+
+<attributes>
+e2.state=visible
+e2.value=running_right
+e3.state=visible
+e4.state=visible
+e5.state=visible
+e6.state=visible
+e7.state=visible
+e8.state=visible
+e9.state=visible
+e10.state=visible
+
+<affordances>
+e2.affords=[focus, track, select]
+e4.affords=[inspect, select, track]
+e6.affords=[inspect, select, track]
+e7.affords=[inspect, select, track]
+e9.affords=[inspect, approach, track]
+e10.affords=[approach, track]
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e10)
+grouped(e3,e4,e5)
+grouped(e5,e7,e8)
+adjacent(e3,e4)
+adjacent(e4,e5)
+adjacent(e5,e7)
+adjacent(e7,e8)
+blocks(e9,e10)
+
+<state_flags>
+progress=0.2
+phase=early
+scene_type=game_play
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e2
+blocker=e9
+constraint=move right safely; no enemies or pits visible, low jump likely sufficient near pipe
+candidate_set=[e2,e9,e10,e4,e7]
+history_anchor=e2
+
+<uncertainty>
+e9.pos=medium
+e10.pos=medium
+
+<actions>
+a1=Jump Level: 0
+a2=Jump Level: 1
+a3=Jump Level: 2
+a4=Jump Level: 3
+a5=Jump Level: 4
+</state>

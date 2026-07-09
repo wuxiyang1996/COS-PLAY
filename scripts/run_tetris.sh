@@ -22,7 +22,7 @@
 #
 #    # Resume from a checkpoint:
 #    RESUME_FROM_STEP=4 TOTAL_STEPS=20 \
-#      RUN_DIR=runs/Qwen3-8B_tetris_20260322_170438 \
+#      RUN_DIR=runs/Qwen3.5-9B_tetris_20260322_170438 \
 #      bash scripts/run_tetris.sh
 # ======================================================================
 set -euo pipefail
@@ -51,7 +51,7 @@ mkdir -p "${HF_HUB_CACHE}"
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AgentEvolver:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
 # ── Configurable parameters ──────────────────────────────────────────
-MODEL="${VLLM_MODEL:-Qwen/Qwen3-8B}"
+MODEL="${VLLM_MODEL:-Qwen/Qwen3.5-9B}"
 PORT="${VLLM_PORT:-8000}"
 GPU_UTIL="${VLLM_GPU_UTIL:-0.90}"
 
@@ -99,7 +99,7 @@ if [ -n "${RESUME_FROM_STEP}" ] && [ -z "${RUN_DIR:-}" ]; then
     exit 1
 fi
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-RUN_DIR="${RUN_DIR:-/workspace/game_agent/Game-AI-Agent/runs/Qwen3-8B_tetris_${TIMESTAMP}}"
+RUN_DIR="${RUN_DIR:-/workspace/game_agent/Game-AI-Agent/runs/Qwen3.5-9B_tetris_${TIMESTAMP}}"
 mkdir -p "${RUN_DIR}/checkpoints"
 
 # ── Cleanup on exit ──────────────────────────────────────────────────

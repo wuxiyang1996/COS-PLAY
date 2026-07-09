@@ -1,0 +1,670 @@
+{
+  "game": "tetris",
+  "env_source": "gaming_agent",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/tetris/skill_bank.jsonl",
+  "n_skills": 6,
+  "n_success": 6,
+  "n_with_evaluable_effects": 5,
+  "n_all_predicates_passed": 0,
+  "n_trials_per_skill": 4,
+  "base_seed": 0,
+  "per_skill_trials": {
+    "COMMIT__EVADE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 2
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 2
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 2
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 2
+      }
+    ],
+    "COMMIT__OPTIMIZE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      }
+    ],
+    "COMMIT__POSITION": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 5
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 5
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 5
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 5
+      }
+    ],
+    "COMMIT__SETUP": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      }
+    ],
+    "COMMIT__SURVIVE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 4
+      }
+    ],
+    "INSPECT__SETUP": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      }
+    ]
+  },
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__EVADE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 2,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 2,
+        "n_hops_passed": 0,
+        "pass_rate": 0.0,
+        "per_hop": [
+          {
+            "hop_index": 2,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              }
+            ]
+          },
+          {
+            "hop_index": 3,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "COMMIT__OPTIMIZE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 4,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 4,
+        "n_hops_passed": 0,
+        "pass_rate": 0.0,
+        "per_hop": [
+          {
+            "hop_index": 1,
+            "passed": false,
+            "n_required": 3,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity None count not surfaced"
+              },
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          },
+          {
+            "hop_index": 3,
+            "passed": false,
+            "n_required": 3,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity None count not surfaced"
+              },
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          },
+          {
+            "hop_index": 4,
+            "passed": false,
+            "n_required": 3,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity None count not surfaced"
+              },
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          },
+          {
+            "hop_index": 6,
+            "passed": false,
+            "n_required": 3,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity None count not surfaced"
+              },
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "COMMIT__POSITION",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 5,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 5,
+        "n_hops_passed": 0,
+        "pass_rate": 0.0,
+        "per_hop": [
+          {
+            "hop_index": 1,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "holes"
+                },
+                "passed": false,
+                "detail": "count[holes] 1 \u2192 1"
+              }
+            ]
+          },
+          {
+            "hop_index": 2,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "holes"
+                },
+                "passed": false,
+                "detail": "count[holes] 1 \u2192 1"
+              }
+            ]
+          },
+          {
+            "hop_index": 3,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "holes"
+                },
+                "passed": false,
+                "detail": "count[holes] 1 \u2192 1"
+              }
+            ]
+          },
+          {
+            "hop_index": 5,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "holes"
+                },
+                "passed": false,
+                "detail": "count[holes] 1 \u2192 1"
+              }
+            ]
+          },
+          {
+            "hop_index": 6,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "holes"
+                },
+                "passed": false,
+                "detail": "count[holes] 1 \u2192 1"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "COMMIT__SETUP",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 0,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {}
+    },
+    {
+      "skill_id": "COMMIT__SURVIVE",
+      "skill_type": "action",
+      "n_hops_protocol": 6,
+      "n_hops_eval": 4,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 4,
+        "n_hops_passed": 0,
+        "pass_rate": 0.0,
+        "per_hop": [
+          {
+            "hop_index": 1,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 1,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "lines_cleared"
+                },
+                "passed": false,
+                "detail": "count[lines_cleared] 1 \u2192 1"
+              },
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": true,
+                "detail": "holes attrs changed"
+              }
+            ]
+          },
+          {
+            "hop_index": 2,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 1,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "lines_cleared"
+                },
+                "passed": false,
+                "detail": "count[lines_cleared] 1 \u2192 1"
+              },
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": true,
+                "detail": "holes attrs changed"
+              }
+            ]
+          },
+          {
+            "hop_index": 3,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 1,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "lines_cleared"
+                },
+                "passed": false,
+                "detail": "count[lines_cleared] 1 \u2192 1"
+              },
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": true,
+                "detail": "holes attrs changed"
+              }
+            ]
+          },
+          {
+            "hop_index": 5,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "entity_count_changed",
+                "args": {
+                  "entity_label": "lines_cleared"
+                },
+                "passed": false,
+                "detail": "count[lines_cleared] 1 \u2192 1"
+              },
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": false,
+                "detail": "no shared label changed attributes"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "INSPECT__SETUP",
+      "skill_type": "grounding",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 3,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 3,
+        "n_hops_passed": 0,
+        "pass_rate": 0.0,
+        "per_hop": [
+          {
+            "hop_index": 1,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              }
+            ]
+          },
+          {
+            "hop_index": 5,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              }
+            ]
+          },
+          {
+            "hop_index": 6,
+            "passed": false,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "phase_transitioned",
+                "args": {
+                  "to": "gameover"
+                },
+                "passed": false,
+                "detail": "phase 'play' \u2192 'play' (target='gameover')"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "timestamp": "20260501_035656"
+}

@@ -33,7 +33,7 @@
 #    ITERS_PER_PHASE=10 bash scripts/run_all.sh
 #
 #    # Use a specific run directory (for resume across restarts):
-#    RUN_DIR=runs/Qwen3-8B_20260321_curriculum bash scripts/run_all.sh
+#    RUN_DIR=runs/Qwen3.5-9B_20260321_curriculum bash scripts/run_all.sh
 #
 #    # Legacy mode (external vLLM):
 #    MANAGE_VLLM=0 bash scripts/run_all.sh
@@ -57,7 +57,7 @@ mkdir -p "${HF_HUB_CACHE}"
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AgentEvolver:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
 # ── Configurable parameters ──────────────────────────────────────────
-MODEL="${VLLM_MODEL:-Qwen/Qwen3-8B}"
+MODEL="${VLLM_MODEL:-Qwen/Qwen3.5-9B}"
 PORT="${VLLM_PORT:-8000}"
 TP="${VLLM_TP:-4}"
 GPU_UTIL="${VLLM_GPU_UTIL:-0.90}"

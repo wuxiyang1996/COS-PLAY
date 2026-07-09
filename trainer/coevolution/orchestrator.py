@@ -54,6 +54,29 @@ from trainer.coevolution.vllm_client import AsyncVLLMClient
 logger = logging.getLogger(__name__)
 
 
+def _log_resumed_bank_sizes(sb_manager: Any, source: str, step: int) -> None:
+    """Emit per-game bank sizes after a checkpoint restore.
+
+    Helps detect silent bank-restore failures (the failure-mode where
+    a respawning trainer's lazy ``SkillBankAgent`` was left as ``None``,
+    causing :func:`load_checkpoint` to skip the bank load entirely and
+    the next outer step to flip into spurious cold-start mode).  If
+    every game reports zero skills here while the checkpoint snapshot
+    on disk is non-empty, the resume path is broken.
+    """
+    try:
+        counts = sb_manager.skill_counts()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Resume bank-size log failed (%s source=%s): %s", step, source, exc)
+        return
+    summary = ", ".join(f"{g}={n}" for g, n in counts.items())
+    total = sum(counts.values())
+    logger.info(
+        "Resumed bank sizes (%s ckpt step %d): total=%d skills [%s]",
+        source, step, total, summary or "empty",
+    )
+
+
 async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     """Main co-evolution training loop.
 
@@ -104,9 +127,12 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             log_dir=vllm_log_dir,
             speculative_model=config.speculative_model,
             num_speculative_tokens=config.num_speculative_tokens,
+            speculative_method=config.speculative_method,
         )
         spec_info = ""
-        if config.speculative_model:
+        if config.speculative_method == "mtp" and config.num_speculative_tokens > 0:
+            spec_info = f"  |  spec_decode=MTP ({config.num_speculative_tokens} tokens)"
+        elif config.speculative_model:
             spec_info = f"  |  spec_decode={config.speculative_model} ({config.num_speculative_tokens} tokens)"
         logger.info(
             "vLLM managed mode: %d × TP=1 instances on GPUs %s, "
@@ -148,17 +174,37 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     from concurrent.futures import ProcessPoolExecutor as _PPE
     process_executor = _PPE(max_workers=config.process_workers)
 
-    # ── Per-game skill bank pipelines ────────────────────────────
+    # ── Skill bank pipelines (per-game default; opt-in shared) ─────
     all_games = list(config.games) + list(getattr(config, "eval_games", []))
-    sb_manager = PerGameSkillBankManager(
-        games=all_games,
-        bank_dir=config.bank_dir,
-        model_name=config.model_name,
-        executor=thread_executor,
-        seed_bank_dir=getattr(config, "seed_bank_dir", None),
-        process_executor=process_executor,
-        unified_role_rollouts=getattr(config, "unified_role_rollouts", False),
-    )
+    bank_mode = (getattr(config, "bank_mode", "per_game") or "per_game").lower()
+    if bank_mode not in ("per_game", "shared"):
+        raise ValueError(
+            f"Unknown bank_mode={bank_mode!r}. Expected 'per_game' or 'shared'. "
+            "See trainer/coevolution/config.py:CoEvolutionConfig.bank_mode."
+        )
+    if bank_mode == "shared":
+        from trainer.coevolution.skillbank_pipeline import SharedSkillBankManager
+        sb_manager = SharedSkillBankManager(
+            games=all_games,
+            bank_dir=config.bank_dir,
+            model_name=config.model_name,
+            executor=thread_executor,
+            seed_bank_dir=getattr(config, "seed_bank_dir", None),
+            process_executor=process_executor,
+            unified_role_rollouts=getattr(config, "unified_role_rollouts", False),
+        )
+        logger.info("Skill bank mode: SHARED (one file across %d games)", len(all_games))
+    else:
+        sb_manager = PerGameSkillBankManager(
+            games=all_games,
+            bank_dir=config.bank_dir,
+            model_name=config.model_name,
+            executor=thread_executor,
+            seed_bank_dir=getattr(config, "seed_bank_dir", None),
+            process_executor=process_executor,
+            unified_role_rollouts=getattr(config, "unified_role_rollouts", False),
+        )
+        logger.info("Skill bank mode: PER_GAME (legacy, %d separate banks)", len(all_games))
 
     # ── Determine start step ─────────────────────────────────────
     start_step = 0
@@ -170,11 +216,20 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         if config.resume_from_step is not None:
             start_step = config.resume_from_step
             try:
+                # Eagerly initialise lazy SkillBankAgent instances *before*
+                # load_checkpoint so per-game banks are actually restored
+                # from the snapshot.  Without this, `get_agents()` returns
+                # ``{game: None}`` and ``load_checkpoint``'s ``if agent is
+                # None: continue`` silently no-ops the bank restore — see
+                # run Qwen3.5-9B_20260504_144712 where a mid-step crash
+                # left the trainer respawning with ``bank=0 (empty)``.
+                sb_manager.ensure_agents_initialized()
                 metadata = load_checkpoint(
                     config.checkpoint_dir, start_step,
                     adapter_dir=config.adapter_dir,
                     bank_agents=sb_manager.get_agents(),
                 )
+                _log_resumed_bank_sizes(sb_manager, "explicit step", start_step)
                 logger.info("Resumed from checkpoint step %d", start_step)
                 start_step += 1
             except FileNotFoundError:
@@ -189,11 +244,13 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     f"--resume requested but no checkpoint found "
                     f"in {config.checkpoint_dir}"
                 )
+            sb_manager.ensure_agents_initialized()
             metadata = load_checkpoint(
                 config.checkpoint_dir, latest,
                 adapter_dir=config.adapter_dir,
                 bank_agents=sb_manager.get_agents(),
             )
+            _log_resumed_bank_sizes(sb_manager, "latest", latest)
             start_step = latest + 1
             logger.info("Resumed from latest checkpoint step %d", latest)
 
@@ -201,11 +258,13 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         latest = find_latest_checkpoint(config.checkpoint_dir)
         if latest is not None:
             try:
+                sb_manager.ensure_agents_initialized()
                 metadata = load_checkpoint(
                     config.checkpoint_dir, latest,
                     adapter_dir=config.adapter_dir,
                     bank_agents=sb_manager.get_agents(),
                 )
+                _log_resumed_bank_sizes(sb_manager, "auto", latest)
                 start_step = latest + 1
                 logger.info("Auto-resumed from checkpoint step %d", latest)
             except Exception:
@@ -226,6 +285,53 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         dirs_to_create.append(config.debug_io_dir)
     for d in dirs_to_create:
         Path(d).mkdir(parents=True, exist_ok=True)
+
+    # ── T2.4: single reward sink ──────────────────────────────────
+    # One ``RewardLogger`` per orchestrator instance; threaded through
+    # every rollout via ``collect_rollouts(..., reward_logger=...)`` so
+    # eval and training read from one source. Disable by setting
+    # ``CoEvolutionConfig.reward_log_path = None`` (or empty after
+    # ``resolve_paths()`` post-process).
+    # Teacher-anchored reward normalization (training_notes §4.5):
+    # auto-derive per-game anchors from the SFT cold-start
+    # ``rollout_summary.json`` files, layered over the static
+    # 4-backbone-max fallback table. ``None`` ⇒ "no anchor"; the
+    # downstream ``reward_normalized`` field is then ``None`` too,
+    # which W&B / dashboards distinguish from a real ``0.0``.
+    try:
+        from common.reward_anchors import resolve_anchors as _resolve_anchors
+        reward_anchors = _resolve_anchors()
+        anchored_games = sorted(
+            g for g, v in reward_anchors.items() if v is not None
+        )
+        logger.info(
+            "Reward anchors (§4.5): %d games anchored (%s)",
+            len(anchored_games), ", ".join(anchored_games),
+        )
+    except Exception as _anchor_exc:  # pragma: no cover  (defensive)
+        logger.warning(
+            "Reward anchor resolution failed: %s — normalization will be no-op.",
+            _anchor_exc,
+        )
+        reward_anchors = None
+
+    reward_logger = None
+    if config.reward_log_path:
+        try:
+            from harness.reward_logger import RewardLogger as _RewardLogger
+            reward_logger = _RewardLogger(
+                log_path=config.reward_log_path,
+                reward_anchors=reward_anchors,
+            )
+            logger.info("Reward sink (T2.4): %s", config.reward_log_path)
+        except Exception as exc:
+            logger.warning(
+                "Reward sink init failed (T2.4): %s — proceeding without "
+                "the single-sink mirror; GRPO records still attach reward "
+                "inline. Eval will fall back to per-checkpoint scoreboards.",
+                exc,
+            )
+            reward_logger = None
 
     # ── Initialize TensorBoard ────────────────────────────────────
     tb_writer = None
@@ -250,11 +356,44 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     # ── Step history for logging ──────────────────────────────────
     step_log_path = Path(config.log_dir) / "step_log.jsonl"
 
+    # Reviewer-facing JSONL instrumentation streams (block A patches):
+    # harness rejections, validate_invocation, lifecycle transitions,
+    # intention switches, per-component runtime breakdown.  Disable by
+    # setting `config.reviewer_instrumentation_enabled = False`.
+    try:
+        from trainer.coevolution import _run_loggers as _rl_module  # noqa: WPS433
+        if bool(getattr(config, "reviewer_instrumentation_enabled", True)):
+            _rl_module.set_run_dir(Path(config.run_dir))
+            logger.info(
+                "Reviewer instrumentation enabled — writing to %s/{harness_log,"
+                "lifecycle_log,intention_log,runtime_log}/",
+                config.run_dir,
+            )
+        else:
+            _rl_module.set_run_dir(None)
+    except Exception as _rl_exc:  # noqa: BLE001
+        logger.debug("Reviewer instrumentation setup skipped: %s", _rl_exc)
+
     logger.info(
-        "Starting co-evolution loop: steps %d→%d, %d games × %d eps/game",
+        "Starting co-evolution loop: steps %d→%d, %d games × %d eps/game (default)",
         start_step, config.total_steps - 1,
         len(config.games), config.episodes_per_game,
     )
+    _eps_overrides = getattr(config, "episodes_per_game_overrides", {}) or {}
+    # Surface only the overrides that *differ* from the global default
+    # AND that apply to a currently-active game (cuts noise from the
+    # eval-only roster).
+    _active_overrides = {
+        g: n for g, n in _eps_overrides.items()
+        if n != config.episodes_per_game and g in (
+            list(config.games) + list(getattr(config, "eval_games", []))
+        )
+    }
+    if _active_overrides:
+        logger.info(
+            "Per-game episode overrides active: %s",
+            ", ".join(f"{g}={n}" for g, n in sorted(_active_overrides.items())),
+        )
 
     # ── Start persistent vLLM instances (once) ─────────────────────
     if vllm_manager:
@@ -289,6 +428,10 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         _vstats = ctx['vllm_stats']
         _sk_counts = ctx['skill_counts']
         _n_skills = sum(_sk_counts.values())
+        # Layer D: cross-domain dashboard metrics. Empty dict on
+        # disabled / skipped / fail — the wandb log call below is a
+        # no-op for empty inputs.
+        _dashboard_metrics: Dict[str, float] = ctx.get('dashboard_metrics') or {}
 
         if grpo_result:
             try:
@@ -363,18 +506,54 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 "vllm/prompt_tokens": _vstats["total_prompt_tokens"],
                 "vllm/completion_tokens": _vstats["total_completion_tokens"],
             }
+            # Per-game raw metrics (legacy ``reward/{game}/...`` namespace
+            # is kept *unchanged* for backward-compat with existing W&B
+            # dashboards/queries; new ``reward/raw/{game}/...`` mirrors
+            # the legacy keys for readers that want the namespaced view).
+            #
+            # Per-game normalized metrics (training_notes §4.5):
+            # ``reward/normalized/{game}/...``. ``None`` (no anchor) is
+            # *omitted* from ``log_dict`` rather than logged as a NaN —
+            # this preserves the "no anchor ≠ scored zero" semantic.
+            try:
+                from common.reward_anchors import normalize_reward as _norm
+            except Exception:  # pragma: no cover
+                _norm = None
+            anchored_norms: List[float] = []
             for game, m in _ep_metrics["per_game"].items():
-                log_dict[f"reward/{game}/mean"] = m["mean_reward"]
-                log_dict[f"reward/{game}/max"] = m["max_reward"]
-                log_dict[f"reward/{game}/min"] = m["min_reward"]
-                log_dict[f"reward/{game}/std"] = m["std_reward"]
+                # Legacy + ``reward/raw/`` namespace (identical values).
+                for prefix in (f"reward/{game}", f"reward/raw/{game}"):
+                    log_dict[f"{prefix}/mean"] = m["mean_reward"]
+                    log_dict[f"{prefix}/max"] = m["max_reward"]
+                    log_dict[f"{prefix}/min"] = m["min_reward"]
+                    log_dict[f"{prefix}/std"] = m["std_reward"]
                 log_dict[f"reward/{game}/n_episodes"] = m["n_episodes"]
                 log_dict[f"reward/{game}/mean_steps"] = m["mean_steps"]
+
+                # Normalized namespace — only emitted when an anchor exists.
+                if _norm is not None and reward_anchors is not None:
+                    n_mean = _norm(m["mean_reward"], game, anchors=reward_anchors)
+                    n_max = _norm(m["max_reward"], game, anchors=reward_anchors)
+                    n_min = _norm(m["min_reward"], game, anchors=reward_anchors)
+                    if n_mean is not None:
+                        log_dict[f"reward/normalized/{game}/mean"] = n_mean
+                        anchored_norms.append(n_mean)
+                    if n_max is not None:
+                        log_dict[f"reward/normalized/{game}/max"] = n_max
+                    if n_min is not None:
+                        log_dict[f"reward/normalized/{game}/min"] = n_min
             log_dict["reward/mean"] = _ep_metrics["aggregate"]["mean_reward"]
             log_dict["reward/max"] = _ep_metrics["aggregate"]["max_reward"]
             log_dict["reward/min"] = _ep_metrics["aggregate"]["min_reward"]
             log_dict["reward/std"] = _ep_metrics["aggregate"]["std_reward"]
             log_dict["reward/total_steps"] = _ep_metrics["aggregate"]["total_steps"]
+            # Cross-game normalized aggregate — the headline scalar that
+            # is fair to compare across phases. Uses an unweighted mean
+            # of per-game normalized means (each game contributes
+            # equally regardless of episode count).
+            if anchored_norms:
+                log_dict["reward/normalized/mean"] = sum(anchored_norms) / len(anchored_norms)
+                log_dict["reward/normalized/n_anchored_games"] = len(anchored_norms)
             for game, cnt in _sk_counts.items():
                 log_dict[f"skillbank/{game}/n_skills"] = cnt
             for game, result in _sb_results.items():
@@ -391,6 +570,10 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 for adapter, game_counts in grpo_result.per_game_counts.items():
                     for game, count in game_counts.items():
                         log_dict[f"grpo/{adapter}/{game}/n_samples"] = count
+            # Layer D: fold the cross-domain dashboard metrics into
+            # the same wandb step. Empty dict when disabled/skipped.
+            for k, v in _dashboard_metrics.items():
+                log_dict[k] = v
             try:
                 wandb.log(log_dict, step=_step)
             except Exception as exc:
@@ -430,6 +613,10 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                         tb_writer.add_scalar(f"grpo/skillbank/{adapter}/loss", stats.mean_loss, _step)
                         tb_writer.add_scalar(f"grpo/skillbank/{adapter}/n_samples", stats.n_samples, _step)
                     tb_writer.add_scalar("grpo/wall_time_s", grpo_result.wall_time_s, _step)
+                # Layer D: emit cross-domain dashboard scalars to TB
+                # under the same `cross_domain/...` namespace as wandb.
+                for k, v in _dashboard_metrics.items():
+                    tb_writer.add_scalar(k, v, _step)
                 tb_writer.flush()
             except Exception as exc:
                 logger.warning("TensorBoard log failed: %s", exc)
@@ -439,6 +626,38 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 f.write(json.dumps(step_summary, default=str) + "\n")
         except Exception:
             pass
+
+        # Block A5: flush per-component runtime aggregates to JSONL.
+        # Sources:
+        #   * AsyncVLLMClient.snapshot_per_component() — actor traffic.
+        #   * record_component_call() aggregator — non-actor 35B traffic
+        #     (crafter LLM, promotion judge, harness validator, schema).
+        try:
+            from trainer.coevolution._run_loggers import (
+                log_component_timing,
+                flush_component_timings,
+                flush_shaping_ratio,
+            )
+            try:
+                actor_snap = vllm_client.snapshot_per_component(reset=True)
+            except Exception:  # noqa: BLE001
+                actor_snap = {}
+            for component, bucket in actor_snap.items():
+                log_component_timing(
+                    step=_step,
+                    component=str(component),
+                    n_calls=int(bucket.get("n_calls", 0)),
+                    total_ms=float(bucket.get("total_ms", 0.0)),
+                    prompt_tokens=int(bucket.get("prompt_tokens", 0)),
+                    completion_tokens=int(bucket.get("completion_tokens", 0)),
+                )
+            flush_component_timings(_step)
+            try:
+                flush_shaping_ratio(_step)
+            except Exception as _shape_exc:  # noqa: BLE001
+                logger.debug("shaping_ratio flush failed: %s", _shape_exc)
+        except Exception as _rl_exc:  # noqa: BLE001
+            logger.debug("component_timing flush failed: %s", _rl_exc)
 
         should_checkpoint = (
             (_step + 1) % config.checkpoint_interval == 0
@@ -519,6 +738,69 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 except Exception as exc:
                     logger.warning("Best-checkpoint rollback failed: %s", exc)
 
+    # ──────────────────────────────────────────────────────────────────
+    # Phase-start GameProfile cache (Path 1).  Populated on first entry
+    # to a game and refreshed whenever the curriculum transitions to a
+    # game we have not yet seen this run.  Entries are passed through
+    # ``collect_rollouts → run_episode_async`` so the actor's
+    # SYSTEM_PROMPT and SKILL_SELECTION_SYSTEM_PROMPT can prepend the
+    # compact profile.  See ``trainer/coevolution/_game_schema.py``.
+    # ──────────────────────────────────────────────────────────────────
+    game_profiles: Dict[str, Any] = {}
+
+    async def _refresh_game_schemas(games_to_check: List[str]) -> None:
+        if not getattr(config, "game_schema_enabled", False):
+            return
+        new_games = [g for g in games_to_check if g not in game_profiles]
+        if not new_games:
+            return
+        try:
+            from trainer.coevolution._game_schema import ensure_game_schemas
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "game_schema import failed (%s); skipping GameProfile gen",
+                exc,
+            )
+            return
+        backbone_judge = (
+            getattr(config, "game_schema_model", "")
+            or os.environ.get("VLM_AGENT_BACKBONE_JUDGE_MODEL", "")
+            or "Qwen/Qwen3.5-35B-A3B"
+        )
+        logger.info(
+            "Phase-start GameProfile: generating for %d game(s) via %s "
+            "(timeout=%.0fs, max_tokens=%d)",
+            len(new_games), backbone_judge,
+            config.game_schema_timeout_s, config.game_schema_max_tokens,
+        )
+        try:
+            fresh = await ensure_game_schemas(
+                games=new_games,
+                run_dir=config.run_dir,
+                model=backbone_judge,
+                executor=thread_executor,
+                max_tokens=config.game_schema_max_tokens,
+                timeout_s=config.game_schema_timeout_s,
+            )
+            game_profiles.update(fresh)
+            llm_count = sum(1 for p in fresh.values() if p.source == "llm")
+            cache_count = sum(1 for p in fresh.values() if p.source == "cache")
+            fb_count = len(fresh) - llm_count - cache_count
+            logger.info(
+                "Phase-start GameProfile: %d ready (llm=%d cache=%d "
+                "fallback=%d)",
+                len(fresh), llm_count, cache_count, fb_count,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Phase-start GameProfile gen failed (%s); proceeding "
+                "without per-game profile injection",
+                exc,
+            )
+
+    if getattr(config, "game_schema_enabled", False):
+        await _refresh_game_schemas(list(config.games))
+
     # ==================================================================
     # MAIN LOOP — pipelined: GRPO(N) overlaps with rollout(N+1)
     # ==================================================================
@@ -540,6 +822,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     "Curriculum transition at step %d: %s → %s",
                     step, prev_games, config.games,
                 )
+                await _refresh_game_schemas(list(config.games))
 
         try:
             from skill_agents.stage3_mvp.schemas import ProtoSkill
@@ -563,9 +846,96 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         )
 
         sb_manager.reset_for_step()
+        # T2.7 — refresh the curator warmup ramp once per outer step so
+        # the GRPO wrapper scales ``curator_reward`` by the configured
+        # weight × min(1, step / warmup_steps). Defaults
+        # (curator_warmup_steps=0, curator_weight=1.0) are a no-op,
+        # preserving pre-T2.7 behaviour.
+        try:
+            from skill_agents.bank_maintenance.llm_curator import (
+                set_curator_warmup as _set_curator_warmup,
+            )
+            _set_curator_warmup(
+                weight=config.curator_weight,
+                warmup_steps=config.curator_warmup_steps,
+                current_step=step,
+            )
+        except Exception as _curator_warmup_exc:  # noqa: BLE001
+            logger.warning(
+                "T2.7 curator warmup setter failed: %s", _curator_warmup_exc,
+            )
         vllm_client.reset_stats()
         if config.debug_io:
             vllm_client.set_io_step(step)
+
+        # ── Build per-game SkillHarnessHook (PLAN-HARNESS §5.2 + §3.4)
+        # The hook reads the per-game ``skill_bank.jsonl`` once per step
+        # and exposes :meth:`SkillHarnessHook.filter_candidates` /
+        # :meth:`SkillHarnessHook.validate_choice` to the episode runner.
+        # The aggregated rejection sink is drained by the Phase B′
+        # Crafter hook into ``SkillRecord.false_binding_patterns``.
+        # Off by default; controlled by ``config.harness_enabled``.
+        harness_hooks: Dict[str, Any] = {}
+        if getattr(config, "harness_enabled", False):
+            try:
+                from trainer.coevolution._harness_hook import SkillHarnessHook
+                _hook_bank_paths = sb_manager.bank_paths(simple_only=True)
+                _allow_shadow = bool(getattr(config, "harness_allow_shadow", True))
+                # Path 4 — LLM Harness validator wiring.  All four
+                # ``llm_harness_*`` knobs are passive when
+                # ``llm_harness_validator_enabled=False`` (default).
+                _llm_v_enabled = bool(getattr(
+                    config, "llm_harness_validator_enabled", False,
+                ))
+                _llm_v_model = str(getattr(config, "llm_harness_model", "") or "")
+                _llm_v_bootstrap = int(getattr(
+                    config, "llm_harness_bootstrap_steps", 20,
+                ))
+                _llm_v_max_tokens = int(getattr(
+                    config, "llm_harness_max_tokens", 256,
+                ))
+                _llm_v_temperature = float(getattr(
+                    config, "llm_harness_temperature", 0.2,
+                ))
+                _llm_v_timeout = float(getattr(
+                    config, "llm_harness_timeout_s", 30.0,
+                ))
+                _harness_mode = str(getattr(config, "harness_mode", "full") or "full")
+                for _g, _bp in _hook_bank_paths.items():
+                    try:
+                        harness_hooks[_g] = SkillHarnessHook.for_game(
+                            game=_g,
+                            bank_path=Path(_bp),
+                            allow_shadow=_allow_shadow,
+                            llm_validator_enabled=_llm_v_enabled,
+                            llm_validator_model=_llm_v_model,
+                            trainer_step=step,
+                            bootstrap_steps=_llm_v_bootstrap,
+                            llm_validator_max_tokens=_llm_v_max_tokens,
+                            llm_validator_temperature=_llm_v_temperature,
+                            llm_validator_timeout_s=_llm_v_timeout,
+                            game_profile=(game_profiles or {}).get(_g),
+                            mode=_harness_mode,
+                        )
+                    except Exception as _hexc:                  # noqa: BLE001
+                        logger.warning(
+                            "harness_hook build failed for game=%s: %s",
+                            _g, _hexc,
+                        )
+                logger.info(
+                    "Phase A: harness enabled — %d hook(s) built (%s)",
+                    len(harness_hooks),
+                    ", ".join(
+                        f"{g}={h.n_records()}" for g, h in harness_hooks.items()
+                    ) or "empty",
+                )
+            except Exception as _hexc:                          # noqa: BLE001
+                logger.warning(
+                    "Phase A: harness setup failed at step=%d: %s — "
+                    "falling back to harness-disabled rollout",
+                    step, _hexc,
+                )
+                harness_hooks = {}
 
         # ── Phase A + B: Rollout collection with cross-system overlap ──
         phase_ab_t0 = time.monotonic()
@@ -639,6 +1009,9 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 skill_banks=skill_banks if bank_available else None,
                 on_episode_done=on_episode_done,
                 thread_executor=thread_executor,
+                harness_hooks=harness_hooks if harness_hooks else None,
+                reward_logger=reward_logger,
+                game_profiles=game_profiles if game_profiles else None,
             )
         )
         consumer_task = asyncio.create_task(skill_bank_consumer())
@@ -738,12 +1111,320 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         phase_b_time = time.monotonic() - phase_b_t0
         logger.info("Phase B finalize: %.1fs (%d game banks)", phase_b_time, len(sb_update_results))
 
+        # ── Phase B′: Crafter + Promotion (one-way write-back) ───────
+        # Off by default; controlled by `config.crafter_promotion_enabled`.
+        # Spec: implementation_notes/legacy/harness-usability-and-intra-gymv-transfer.md §3
+        # The hook runs *alongside* the legacy Stage-4 curator: legacy
+        # mining still writes per-game `skill_bank.jsonl`, this hook just
+        # appends promoted skills on top via `skill_bank.legacy_writeback`.
+        crafter_report: Optional[Dict[str, Any]] = None
+        promotion_report: Optional[Dict[str, Any]] = None
+        # Block B2 — when ``crafter_enabled=False`` the entire crafter
+        # phase is skipped.  Promotion/lifecycle still get a chance to
+        # run, but with zero new proposals to evaluate.  This isolates
+        # the crafter's contribution to the §5.5 ablation table.
+        _crafter_enabled = bool(getattr(config, "crafter_enabled", True))
+        if config.crafter_promotion_enabled and _crafter_enabled:
+            phase_bp_t0 = time.monotonic()
+            try:
+                from trainer.coevolution._crafter_hook import run_crafter_step
+                from trainer.coevolution._promotion_hook import run_promotion_step
+
+                bank_paths = sb_manager.bank_paths(simple_only=True)
+                # ``bank_was_available`` gates the NO_SKILL_BOUND F2 signal —
+                # we only want it to fire when the actor *could* have bound
+                # a skill but didn't.  Just gating on ``step > 0`` is wrong
+                # whenever the run was launched with ``--seed-bank-dir`` (or
+                # otherwise resumes from a pre-populated bank dir) because
+                # the actor on step 0 has skills available.  Probe the
+                # on-disk file directly: if *any* per-game bank has ≥1
+                # byte, there were skills to bind.
+                bank_was_available = any(
+                    p.is_file() and p.stat().st_size > 0
+                    for p in bank_paths.values()
+                )
+                crafter_step = run_crafter_step(
+                    step=step,
+                    run_dir=Path(config.run_dir),
+                    rollout_results=rollout_results,
+                    legacy_bank_paths=bank_paths,
+                    bank_was_available=bank_was_available,
+                    cycle_every_k_steps=config.crafter_cycle_every_k_steps,
+                    outcome_failure_threshold=config.crafter_outcome_failure_threshold,
+                    harness_hooks=harness_hooks if harness_hooks else None,
+                    enable_protocol_patching=config.crafter_enable_protocol_patching,
+                    # Path 2 — supplemental LLM Crafter (35B) wiring.
+                    llm_crafter_enabled=getattr(
+                        config, "llm_crafter_enabled", False,
+                    ),
+                    llm_crafter_model=getattr(
+                        config, "llm_crafter_model", "",
+                    ),
+                    llm_crafter_k_max=getattr(
+                        config, "llm_crafter_k_max", 5,
+                    ),
+                    llm_crafter_max_tokens=getattr(
+                        config, "llm_crafter_max_tokens", 1024,
+                    ),
+                    llm_crafter_temperature=getattr(
+                        config, "llm_crafter_temperature", 0.3,
+                    ),
+                    llm_crafter_timeout_s=getattr(
+                        config, "llm_crafter_timeout_s", 60.0,
+                    ),
+                    # Stage 2 cross-domain knob — Stage 1 keeps False.
+                    llm_crafter_enable_thinking=getattr(
+                        config, "llm_crafter_enable_thinking", False,
+                    ),
+                    game_profiles=game_profiles if game_profiles else None,
+                    # Hypothesizer fallthrough gate (post-v11 audit).
+                    # Defaults to (3, 0.30) — i.e. fire only on
+                    # recurring failures with no related bank skill —
+                    # so the bank doesn't fill up with placeholder
+                    # ``hypothesis__prop-...`` records the actor never
+                    # selects.  Override via CoEvolutionConfig fields
+                    # (added with the same getattr fallback in case an
+                    # older config object is in use).
+                    hypothesize_min_recurrences=getattr(
+                        config, "crafter_hypothesize_min_recurrences", 3,
+                    ),
+                    hypothesize_related_skill_jaccard=getattr(
+                        config, "crafter_hypothesize_related_skill_jaccard", 0.30,
+                    ),
+                )
+                crafter_report = crafter_step.to_dict()
+
+                if crafter_step.n_proposals > 0:
+                    promotion_step = run_promotion_step(
+                        step=step,
+                        run_dir=Path(config.run_dir),
+                        proposals_run_dir=crafter_step.run_dir,
+                        legacy_bank_paths=bank_paths,
+                        driver_timeout_s=config.crafter_promotion_timeout_s,
+                        gate_mode=getattr(
+                            config,
+                            "crafter_promotion_gate_mode",
+                            "offline-synthetic",
+                        ),
+                        # Stage 2 cross-domain knobs — only consulted
+                        # when ``gate_mode == "offline-with-llm-judge"``;
+                        # for any other mode the driver ignores them.
+                        judge_enable_thinking=getattr(
+                            config,
+                            "crafter_promotion_judge_enable_thinking",
+                            False,
+                        ),
+                        judge_max_tokens=getattr(
+                            config,
+                            "crafter_promotion_judge_max_tokens",
+                            256,
+                        ),
+                        # Block B3 — w/o lifecycle gating ablation.
+                        bypass_mode=getattr(
+                            config, "promotion_bypass_mode", "gated",
+                        ),
+                    )
+                    promotion_report = promotion_step.to_dict()
+
+                    # ── Layer A: cross-domain transfer gate ──────────
+                    # Re-evaluates each just-promoted skill's admit rate
+                    # against the configured transfer targets. Skills
+                    # failing crafter_transfer_admit_band[0] on every
+                    # target are rolled back (dropped from the per-game
+                    # skill_bank.jsonl) before the bank reload below.
+                    # Off by default; conservative on any failure
+                    # (subprocess crash / timeout / parse error ⇒ no
+                    # demotions, full report still surfaced).
+                    transfer_gate_report: Optional[Dict[str, Any]] = None
+                    if (
+                        config.crafter_transfer_gate_enabled
+                        and config.crafter_transfer_targets
+                        and not promotion_step.skipped
+                        and promotion_step.driver_returncode == 0
+                    ):
+                        try:
+                            from trainer.coevolution._transfer_hook import (
+                                run_transfer_gate_step,
+                            )
+                            transfer_step = run_transfer_gate_step(
+                                step=step,
+                                run_dir=Path(config.run_dir),
+                                promotion_writeback_per_game=(
+                                    promotion_step.writeback_per_game or {}
+                                ),
+                                legacy_bank_paths=bank_paths,
+                                transfer_targets=tuple(
+                                    config.crafter_transfer_targets,
+                                ),
+                                transfer_admit_band=tuple(
+                                    config.crafter_transfer_admit_band,
+                                ),
+                                transfer_min_targets_in_band=(
+                                    config.crafter_transfer_min_targets_in_band
+                                ),
+                                transfer_max_skills_per_cell=(
+                                    config.crafter_transfer_max_skills_per_cell
+                                ),
+                                transfer_driver_timeout_s=(
+                                    config.crafter_transfer_timeout_s
+                                ),
+                            )
+                            transfer_gate_report = transfer_step.to_dict()
+                            if transfer_step.n_demote > 0:
+                                logger.info(
+                                    "Phase B′ transfer gate: %d/%d skills "
+                                    "demoted (cross-domain admit floor)",
+                                    transfer_step.n_demote,
+                                    transfer_step.n_skills_in,
+                                )
+                            elif transfer_step.skipped:
+                                logger.info(
+                                    "Phase B′ transfer gate: skipped (%s)",
+                                    transfer_step.skipped_reason,
+                                )
+                            if promotion_report is not None:
+                                promotion_report["transfer_gate"] = (
+                                    transfer_gate_report
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "Phase B′ transfer gate failed at step=%d: %s",
+                                step, exc, exc_info=True,
+                            )
+
+                    # Critical: hot-reload the in-memory bank for any game
+                    # whose on-disk skill_bank.jsonl was just mutated by
+                    # legacy_writeback OR by the transfer gate's demotion
+                    # rollback. Without this, AsyncSkillBankPipeline
+                    # keeps serving the cached SkillBankMVP._skills from
+                    # before the writeback (and its cached SkillQueryEngine
+                    # never re-indexes), so the actor's *next* rollout
+                    # would not observe the promoted skills. See
+                    # implementation_notes/legacy/harness-usability-and-intra-gymv-transfer.md
+                    # §"actor read path" for the trace.
+                    keys_to_reload = [
+                        game for game, wb in (
+                            promotion_step.writeback_per_game or {}
+                        ).items()
+                        if int(wb.get("n_inserted", 0)) > 0
+                        or int(wb.get("n_updated", 0)) > 0
+                    ]
+                    reload_report: Dict[str, Any] = {}
+                    if keys_to_reload:
+                        reload_report = sb_manager.reload_banks_from_disk(
+                            keys_to_reload,
+                        )
+                    if promotion_report is not None:
+                        promotion_report["bank_reload_per_game"] = reload_report
+                    # Surface driver subprocess failures loudly — without
+                    # this branch a non-zero returncode looks identical to
+                    # a clean "no eligible promotions" outcome in the log.
+                    if promotion_step.skipped or promotion_step.driver_returncode != 0:
+                        logger.warning(
+                            "Phase B′ Promotion driver did not complete "
+                            "cleanly at step=%d: returncode=%d, skipped=%s, "
+                            "reason=%r — see %s/_step_summary.json",
+                            step,
+                            promotion_step.driver_returncode,
+                            promotion_step.skipped,
+                            promotion_step.skipped_reason,
+                            promotion_step.promotion_run_dir,
+                        )
+                    else:
+                        logger.info(
+                            "Phase B′ Crafter+Promotion: %d proposals → "
+                            "PROMOTE=%d REJECT=%d (writeback +%d skills, "
+                            "reloaded %d bank(s))",
+                            crafter_step.n_proposals,
+                            promotion_step.n_promote, promotion_step.n_reject,
+                            promotion_step.n_writeback_inserted,
+                            sum(1 for r in reload_report.values()
+                                if r.get("reloaded")),
+                        )
+                else:
+                    logger.info(
+                        "Phase B′ Crafter: %d episodes reflected, no proposals → "
+                        "promotion skipped",
+                        crafter_step.n_episodes_reflected,
+                    )
+            except Exception as exc:                          # noqa: BLE001
+                logger.error(
+                    "Phase B′ Crafter+Promotion failed at step=%d: %s",
+                    step, exc, exc_info=True,
+                )
+            phase_bp_time = time.monotonic() - phase_bp_t0
+        else:
+            phase_bp_time = 0.0
+
+        # ── Layer D: cross-domain dashboard (periodic) ──────────────
+        # Off by default; cadence-controlled via
+        # `crafter_dashboard_every_k_steps`. Snapshots the trainer's
+        # banks and runs the full Stage-6 N×N transfer matrix to
+        # surface G1-G5 acceptance gates + per-cluster admit rates
+        # as wandb / TB scalars. Decoupled from Layer A so the
+        # dashboard cadence can be much lower than the per-step
+        # transfer gate (a single sweep is ~1-30 minutes).
+        dashboard_report: Optional[Dict[str, Any]] = None
+        dashboard_metrics: Dict[str, float] = {}
+        if config.crafter_dashboard_enabled:
+            try:
+                from trainer.coevolution._dashboard_hook import (
+                    run_dashboard_step,
+                    should_run_dashboard,
+                )
+                if should_run_dashboard(
+                    step=step,
+                    every_k_steps=config.crafter_dashboard_every_k_steps,
+                    enabled=config.crafter_dashboard_enabled,
+                ):
+                    dashboard_step = run_dashboard_step(
+                        step=step,
+                        run_dir=Path(config.run_dir),
+                        legacy_bank_paths=sb_manager.bank_paths(simple_only=True),
+                        dashboard_targets=tuple(
+                            config.crafter_dashboard_targets,
+                        ),
+                        dashboard_max_skills_per_cell=(
+                            config.crafter_dashboard_max_skills_per_cell
+                        ),
+                        dashboard_driver_timeout_s=(
+                            config.crafter_dashboard_timeout_s
+                        ),
+                    )
+                    dashboard_report = dashboard_step.to_dict()
+                    dashboard_metrics = dashboard_step.to_metrics()
+                    if dashboard_step.skipped:
+                        logger.info(
+                            "Cross-domain dashboard at step=%d: skipped (%s)",
+                            step, dashboard_step.skipped_reason,
+                        )
+                    else:
+                        logger.info(
+                            "Cross-domain dashboard at step=%d: %d cells, "
+                            "mean admit=%.1f%%, gates=%s, %.1fs",
+                            step,
+                            dashboard_step.n_cells_evaluated,
+                            dashboard_step.mean_admit_rate * 100,
+                            dashboard_step.gate_verdicts,
+                            dashboard_step.wall_time_s,
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Cross-domain dashboard failed at step=%d: %s",
+                    step, exc, exc_info=True,
+                )
+
         # ── Snapshot step context for deferred finalization ─────────
         step_ctx = {
             'step': step,
             'mode': mode,
             'phase_ab_time': phase_ab_time,
             'phase_b_time': phase_b_time,
+            'phase_bp_time': phase_bp_time,
+            'crafter_report': crafter_report,
+            'promotion_report': promotion_report,
+            'dashboard_report': dashboard_report,
+            'dashboard_metrics': dashboard_metrics,
             'episode_metrics': compute_episode_metrics(rollout_results),
             'sb_update_results': sb_update_results,
             'total_new_skills': total_new_skills,

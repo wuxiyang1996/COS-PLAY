@@ -50,11 +50,20 @@ logger = logging.getLogger(__name__)
 def _get_ask_model(config: LLMJudgeConfig) -> Callable:
     """Return the LLM call function, preferring user-supplied, then API_func.
 
-    Wrapped for reasoning-model compatibility (Qwen3 /no_think, think-tag stripping).
+    Wrapped for reasoning-model compatibility (Qwen3 /no_think,
+    think-tag stripping). The reasoning-model hint follows
+    ``config.model`` so that switching the judge to a Qwen3 reasoning
+    family member (e.g. ``Qwen/Qwen3.5-35B-A3B``) automatically engages
+    the ``<think>`` tag handling, while a non-reasoning judge
+    (``gpt-5.5``, ``claude-*``) is left untouched.
     """
     from skill_agents._llm_compat import wrap_ask_for_reasoning_models
 
-    _hint = "Qwen/Qwen3-8B"
+    # Reasoning-tag handling tracks the *actual* judge model, not the
+    # actor backbone. Falling back to the actor backbone only when no
+    # judge model is configured (in which case ``API_func.ask_model``
+    # itself defaults to ``Qwen/Qwen3.5-9B``).
+    _hint = config.model or "Qwen/Qwen3.5-9B"
     if config.ask_model_fn is not None:
         return wrap_ask_for_reasoning_models(config.ask_model_fn, model_hint=_hint)
     from API_func import ask_model

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Diplomacy inference with trained Qwen3-8B decision agent
+#  Diplomacy inference with trained Qwen/Qwen3.5-9B decision agent
 #
 #  Variants:
 #    da       — standard decision agent vs GPT-5.4
@@ -33,7 +33,7 @@ case "${VARIANT}" in
 esac
 
 # ── Checkpoint paths ─────────────────────────────────────────────────
-RUN_DIR="${PROJECT_ROOT}/runs/Qwen3-8B_20260327_062035"
+RUN_DIR="${PROJECT_ROOT}/runs/Qwen3.5-9B_20260327_062035"
 CKPT_DIR="${RUN_DIR}/checkpoints/step_0017"
 ADAPTER_PATH="${CKPT_DIR}/adapters/decision/action_taking"
 BANKS_DIR="${CKPT_DIR}/banks/diplomacy"
@@ -69,7 +69,7 @@ export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT
 [ -z "${OPENROUTER_API_KEY:-}" ] && echo "Warning: OPENROUTER_API_KEY not set. See .env.example."
 [ -z "${OPENAI_API_KEY:-}" ] && echo "Warning: OPENAI_API_KEY not set. See .env.example."
 
-BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3-8B}"
+BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3.5-9B}"
 NUM_POWERS=7
 EPISODES_PER_POWER="${EPISODES_PER_POWER:-10}"
 EPISODES=$((NUM_POWERS * EPISODES_PER_POWER))

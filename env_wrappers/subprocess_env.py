@@ -1,19 +1,35 @@
 """Subprocess-based environment wrapper.
 
-Spawns the game environment in a child process (potentially using a different
-conda env / Python interpreter) and communicates over JSON-over-pipes.  This
-solves dependency conflicts where the training env (e.g. ``game-ai-agent``,
-NumPy 2.x) is incompatible with a game's env (e.g. ``orak-mario``, NumPy 1.x).
+Spawns the game environment in a child process and communicates over
+JSON-over-pipes.  Two reasons to need this:
 
-Usage::
+1. **Dependency conflicts** — training env (``game-ai-agent``, NumPy 2.x)
+   is incompatible with the game env (``orak-mario``, NumPy 1.x for
+   nes-py).  Use ``python=/path/to/orak-mario/bin/python``.
+
+2. **Process-singleton emulators** — ``stable-retro`` (gymv ``Temporal/*``
+   Genesis envs) refuses to coexist with a sibling instance in the same
+   process: ``Cannot create multiple emulator instances per process``.
+   Without subprocess isolation, only 1/8 concurrent gymv episodes per
+   GRPO step survives, which silently kills GRPO advantage estimation.
+
+Usage (Orak / super_mario, default kind)::
 
     env = SubprocessEnv(
         python="/workspace/miniconda3/envs/orak-mario/bin/python",
         game="super_mario",
         max_steps=500,
     )
+
+Usage (gymv stable-retro, same conda env)::
+
+    env = SubprocessEnv(
+        env_kind="gymv",
+        game="gymv_thunder_force_iii",
+        max_steps=200,
+    )
     obs, info = env.reset()
-    obs, reward, term, trunc, info = env.step("Jump Level: 3")
+    obs, reward, term, trunc, info = env.step("UP")
     env.close()
 """
 
@@ -35,9 +51,43 @@ _WORKER_SCRIPT = str(
 
 _DEFAULT_ORAK_PYTHON = "/workspace/miniconda3/envs/orak-mario/bin/python"
 
+_VALID_ENV_KINDS = ("orak", "gymv")
+
+
+def _default_python_for(env_kind: str) -> str:
+    """Pick the default child-process Python interpreter per env kind.
+
+    ``orak`` defaults to the ``orak-mario`` conda env (NumPy 1.x) so
+    nes-py / Mario imports succeed.  ``gymv`` defaults to ``sys.executable``
+    because stable-retro is installed in the same env that runs training
+    (``game-ai-agent``); the subprocess is purely for emulator-singleton
+    isolation, not dependency separation.
+    """
+    if env_kind == "gymv":
+        return os.environ.get("GYMV_PYTHON") or sys.executable
+    return os.environ.get("ORAK_PYTHON", _DEFAULT_ORAK_PYTHON)
+
 
 class SubprocessEnv:
-    """Gymnasium-style env backed by a child process."""
+    """Gymnasium-style env backed by a child process.
+
+    Parameters
+    ----------
+    game
+        Slug forwarded to the worker (e.g. ``"super_mario"``,
+        ``"gymv_thunder_force_iii"``).
+    env_kind
+        ``"orak"`` (default, back-compat) routes to
+        ``env_wrappers.orak_nl_wrapper.make_orak_env``.  ``"gymv"`` routes
+        to ``env_wrappers.gymv_temporal_nl_wrapper.make_gymv_temporal_env``
+        and uses ``sys.executable`` by default since stable-retro lives in
+        the same conda env as training.
+    max_steps
+        Per-episode horizon enforced by the wrapper inside the worker.
+    python
+        Override the child interpreter.  When omitted, the default depends
+        on ``env_kind`` (see :func:`_default_python_for`).
+    """
 
     def __init__(
         self,
@@ -45,10 +95,17 @@ class SubprocessEnv:
         max_steps: int = 500,
         python: Optional[str] = None,
         startup_timeout: float = 120.0,
+        *,
+        env_kind: str = "orak",
     ):
+        if env_kind not in _VALID_ENV_KINDS:
+            raise ValueError(
+                f"env_kind must be one of {_VALID_ENV_KINDS}, got {env_kind!r}"
+            )
         self._game = game
         self._max_steps = max_steps
-        self._python = python or os.environ.get("ORAK_PYTHON", _DEFAULT_ORAK_PYTHON)
+        self._env_kind = env_kind
+        self._python = python or _default_python_for(env_kind)
         self._action_names: List[str] = []
         self._proc: Optional[subprocess.Popen] = None
 
@@ -72,8 +129,9 @@ class SubprocessEnv:
             _WORKER_SCRIPT,
             "--game", self._game,
             "--max-steps", str(self._max_steps),
+            "--env-kind", self._env_kind,
         ]
-        logger.info("SubprocessEnv: spawning %s", " ".join(cmd))
+        logger.info("SubprocessEnv[%s]: spawning %s", self._env_kind, " ".join(cmd))
 
         self._proc = subprocess.Popen(
             cmd,
@@ -98,8 +156,8 @@ class SubprocessEnv:
             )
         self._action_names = resp.get("action_names", [])
         logger.info(
-            "SubprocessEnv(%s) ready, pid=%d, %d actions",
-            self._game, self._proc.pid, len(self._action_names),
+            "SubprocessEnv[%s](%s) ready, pid=%d, %d actions",
+            self._env_kind, self._game, self._proc.pid, len(self._action_names),
         )
 
     def _send(self, obj: dict) -> None:
@@ -150,7 +208,14 @@ class SubprocessEnv:
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         resp = self._call({"cmd": "reset"}, timeout=120.0)
-        return resp["obs"], resp.get("info", {})
+        info = resp.get("info", {})
+        # gymv's action set is only populated *after* reset by the
+        # underlying wrapper.  Refresh ``self._action_names`` so callers
+        # that read the property post-reset see the real action list.
+        avail = info.get("action_names") or []
+        if avail and isinstance(avail, list):
+            self._action_names = [str(a) for a in avail]
+        return resp["obs"], info
 
     def step(
         self,

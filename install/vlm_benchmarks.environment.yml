@@ -1,0 +1,120 @@
+# Unified conda env for ALL five visual-grounding benchmark domains.
+#
+# Replaces the four-env setup (gaming_eval / browsergym / osworld /
+# bench_vqa) from install/INSTALL_BENCHMARKS.md with a single env that
+# can load every benchmark listed in:
+#   * plans/01-visual-grounding/PLAN-VISUAL-GROUNDING.md               §2, §10
+#   * plans/01-visual-grounding/PLAN-VISUAL-GROUNDING-MILESTONES.md    §3, §7
+#
+# Domains covered:
+#   1. gymv      — 2048 / Sokoban / Minesweeper via GamingAgent (gym/gymnasium)
+#   2. browser   — MiniWoB++ / WebArena / VisualWebArena / WorkArena (browsergym + Playwright)
+#   3. desktop   — OSWorld (captured screenshots + a11y trees).  NOTE:
+#                  `desktop-env` 1.0.x pins `transformers~=4.35.2` which
+#                  conflicts with the `>=4.51` GroundingDINO needs.  The
+#                  desktop GROUNDING pipeline (screenshot → schema via
+#                  OmniParser + GPT-4o adapter) only reads observation
+#                  dicts, so it lives here.  Full OSWorld TASK EXECUTION
+#                  (running desktop-env in Docker/VMware) keeps its own
+#                  env — see `env_wrappers/osworld_environment.yml`.
+#   4. image_qa  — VisualToolBench / TIR-Bench (torch + transformers + datasets + HF hub)
+#   5. video_qa  — Video-Holmes / SIV-Bench (decord + av + opencv)
+#
+# Plus the vlm_wrapper grounding pipeline itself (YOLO/Florence-2/EasyOCR/
+# GroundingDINO via transformers, openai client, dotenv).
+#
+# Build:
+#     conda env create -f install/vlm_benchmarks.environment.yml
+#     conda activate vlm_benchmarks
+#     python -m playwright install chromium                 # for browser
+#     pip install -e .                                       # vlm_wrapper
+#     # optional: clone + install GamingAgent for gymv stepping
+#     git clone https://github.com/lmgame-org/GamingAgent.git \
+#         /fs/gamma-projects/vlm-robot/GamingAgent
+#     pip install -e /fs/gamma-projects/vlm-robot/GamingAgent
+#     pip install "numpy==1.26.4"   # undo GamingAgent's numpy==1.24.4 pin
+#
+# Notes on version pins (all verified working together):
+#   * python 3.11 — required by browsergym-core and vlm_wrapper.
+#   * torch 2.4.1+cu121 — matches the swift env we already run inference in;
+#     cu121 wheels work on the A100/A40 nodes this project uses.
+#   * transformers >=4.51,<4.56 — GroundingDINO API accepts both
+#     `box_threshold=` (old) and `threshold=` (new) which the vlm_wrapper
+#     call site resolves via inspect.signature.
+#   * gymnasium ~0.28.1 — the exact pin OSWorld requires. browsergym-core
+#     ≥0.8 works against this (its own pin is gymnasium>=0.27).
+
+name: vlm_benchmarks
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24
+  - pip:
+      # ── PyTorch (CUDA 12.1 wheels) ───────────────────────────────────
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.4.1
+      - torchvision==0.19.1
+
+      # ── HuggingFace stack (shared by all 5 domains) ──────────────────
+      - transformers>=4.51,<4.56
+      - accelerate>=0.30
+      - safetensors>=0.4
+      - sentence-transformers>=2.7.0
+      - huggingface_hub>=0.24
+      - datasets>=2.19
+
+      # ── vlm_wrapper vision back-ends ─────────────────────────────────
+      - timm>=0.9                     # Florence-2 DaViT backbone
+      - easyocr>=1.7                  # OCR fallback
+      - ultralytics>=8.0              # YOLO icon detector for OmniParser-v2
+      - opencv-python>=4.7
+      - decord>=0.6                   # video frame decoding
+      - av>=12.0                      # fallback video decoder
+      - supervision>=0.20             # OmniParser post-processing
+
+      # ── Domain 1: gymv  (2048 / Sokoban / Minesweeper) ───────────────
+      #   OSWorld pins gymnasium~=0.28.1 which is lenient enough for the
+      #   GamingAgent wrappers too.
+      - gymnasium~=0.28.1
+      - gym==0.26.2                   # legacy alias the GamingAgent wrapper still imports
+      - numpy<2.0                     # required by decord + transformers + gym
+
+      # ── Domain 2: browser  (BrowserGym + Playwright) ─────────────────
+      - browsergym
+      - browsergym-core
+      - browsergym-miniwob
+      - browsergym-webarena
+      - browsergym-visualwebarena
+      - browsergym-workarena
+      - playwright>=1.45
+
+      # ── Domain 3: desktop  (OSWorld grounding only) ──────────────────
+      # desktop-env itself is NOT installed here (see header note). The
+      # grounding adapter reads plain obs dicts; task-level OSWorld runs
+      # use the standalone `osworld` env.
+      - docker>=7.0                   # Docker SDK (task-level VMs, optional)
+
+      # ── Image-QA + Video-QA API clients (for labeling via Head 2) ────
+      - openai>=1.0
+      - anthropic>=0.25
+      - google-genai>=0.3
+
+      # ── Image / config / utility ─────────────────────────────────────
+      - Pillow>=10.0
+      - pyyaml>=6.0
+      - omegaconf>=2.3.0
+      - requests
+      - tqdm
+
+      # ── Logging + CLI ────────────────────────────────────────────────
+      - loguru>=0.7.0
+      - coloredlogs
+      - python-dotenv
+
+      # ── Tests ────────────────────────────────────────────────────────
+      - pytest>=7.0
+      - pytest-mock>=3.0
+
+      # ── Modern NVML (silences the pynvml deprecation warning) ────────
+      - nvidia-ml-py

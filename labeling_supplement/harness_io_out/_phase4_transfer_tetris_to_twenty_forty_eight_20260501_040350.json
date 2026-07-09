@@ -1,0 +1,161 @@
+{
+  "source_game": "tetris",
+  "target_game": "twenty_forty_eight",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/tetris/skill_bank.jsonl",
+  "actions_root": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_actions_out/run_20260430_064325",
+  "k": 4,
+  "pass_rate_min": 0.5,
+  "max_skills": 6,
+  "max_demos_per_episode": 2,
+  "max_episodes": 3,
+  "n_skills": 6,
+  "n_passed_target_pass_rate": 4,
+  "n_verified_tasks_promoted": 4,
+  "eligibility_before_admit_count": 0,
+  "eligibility_after_admit_count": 4,
+  "eligibility_admit_delta": 4,
+  "elapsed_s": 1.29,
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__EVADE",
+      "skill_type": "action",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 0,
+      "n_aborted": 0,
+      "pass_rate": 0.0,
+      "success": false,
+      "diagnostic_label": "adaptation_overfitting",
+      "cost_ms": 2.6874542236328125,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": false,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": []
+    },
+    {
+      "skill_id": "COMMIT__OPTIMIZE",
+      "skill_type": "action",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 0,
+      "n_aborted": 0,
+      "pass_rate": 0.0,
+      "success": false,
+      "diagnostic_label": "adaptation_overfitting",
+      "cost_ms": 2.2993087768554688,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": false,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": []
+    },
+    {
+      "skill_id": "COMMIT__POSITION",
+      "skill_type": "action",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 3.8101673126220703,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    },
+    {
+      "skill_id": "COMMIT__SETUP",
+      "skill_type": "action",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 1.1436939239501953,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    },
+    {
+      "skill_id": "COMMIT__SURVIVE",
+      "skill_type": "action",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 2.9611587524414062,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    },
+    {
+      "skill_id": "INSPECT__SETUP",
+      "skill_type": "grounding",
+      "source_task": "tetris",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 2.1178722381591797,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "tetris"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    }
+  ],
+  "timestamp": "20260501_040350"
+}

@@ -15,10 +15,11 @@ Core types:
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Mapping, Optional, Set
 
 
 @dataclass
@@ -330,12 +331,23 @@ class Protocol:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> Protocol:
+    def from_dict(cls, d) -> Protocol:
+        # Accept three on-disk shapes:
+        #   * ``None`` / falsy → empty Protocol
+        #   * ``Mapping`` (legacy cold-start) → keys "preconditions",
+        #     "steps", "success_criteria", "abort_criteria", …
+        #   * ``list`` (Day-2-lifted bank) → list of typed hops
+        #     ``[{"action": ..., "payload": {...}, "notes": ...}, …]``;
+        #     we collapse to NL strings so downstream consumers (which
+        #     do ``" → ".join(skill.protocol.steps)``) keep working,
+        #     and the ancillary fields default to empty.
         if not d:
             return cls()
+        if isinstance(d, list):
+            return cls(steps=_lifted_hops_to_nl_steps(d))
         return cls(
             preconditions=d.get("preconditions", []),
-            steps=d.get("steps", []),
+            steps=_coerce_protocol_steps_to_str(d.get("steps", [])),
             success_criteria=d.get("success_criteria", []),
             abort_criteria=d.get("abort_criteria", []),
             expected_duration=d.get("expected_duration", 10),
@@ -345,6 +357,52 @@ class Protocol:
             action_vocab=d.get("action_vocab", []),
             source=d.get("source", "template"),
         )
+
+
+def _coerce_protocol_steps_to_str(raw) -> List[str]:
+    """Normalise a ``protocol.steps`` payload to ``List[str]``.
+
+    Day-2 lifted banks may emit each step as ``{"action", "payload",
+    "notes"}``; legacy cold-start banks emit prose strings. The rest of
+    ``stage3_mvp`` does ``" → ".join(skill.protocol.steps)``, so we
+    collapse to strings here.
+    """
+
+    if not raw:
+        return []
+    out: List[str] = []
+    for s in raw:
+        if isinstance(s, str):
+            out.append(s)
+        elif isinstance(s, Mapping):
+            out.append(_lifted_hop_to_nl(s))
+        else:
+            out.append(str(s))
+    return out
+
+
+def _lifted_hops_to_nl_steps(hops) -> List[str]:
+    return [
+        _lifted_hop_to_nl(h) if isinstance(h, Mapping) else str(h)
+        for h in hops or []
+    ]
+
+
+def _lifted_hop_to_nl(hop: Mapping[str, Any]) -> str:
+    """Mirror of :func:`skill_bank.legacy_writeback._typed_protocol_to_nl_steps`
+    on a single hop; lives here so stage3_mvp doesn't pull the writeback
+    module just to coerce a list."""
+
+    notes = hop.get("notes")
+    if isinstance(notes, str) and notes.strip():
+        return notes.strip()
+    action = hop.get("action")
+    if isinstance(action, str) and action.strip():
+        payload = hop.get("payload")
+        if isinstance(payload, Mapping) and payload:
+            return f"{action.strip()} {json.dumps(payload, sort_keys=True)}"
+        return action.strip()
+    return json.dumps(dict(hop), sort_keys=True)
 
 
 @dataclass
@@ -440,6 +498,38 @@ class Skill:
     retired: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+
+    # ── Cross-game / shared-bank metadata (PLAN-SKILL-BANK §22) ──
+    #
+    # ``feasible_tasks`` answers "which task within the skill's domain
+    # may admit this record?". Empty == task-agnostic (back-compat for
+    # records produced before the shared-bank mode landed).
+    #
+    # ``verified_tasks`` is the subset of ``feasible_tasks`` on which
+    # the gate (E0/E1/E2) has actually passed during this run. Promotion
+    # is per-task: a skill may be ``verified_tasks=["candy_crush"]`` while
+    # still ``shadow`` on Columns even after translation.
+    #
+    # ``derived_from`` carries provenance when this skill was minted by
+    # the cross-game translator (``skill_agents.skill_bank.translate_for_target``):
+    # it points to the *source* skill_id this record was rewritten from,
+    # so the curator + retirement passes can find the lineage.
+    #
+    # ``confidence_tag`` distinguishes runtime quality classes:
+    #   * "stable"     — minted by the foundry, gates passed
+    #   * "translated" — produced by the cross-game translator; soft-promoted,
+    #                    must re-earn ``verified`` status on the target
+    #   * "shadow"     — admitted but not yet selected by GRPO
+    #   * "retired"    — kept for provenance but excluded from retrieval
+    #
+    # All four fields are *additive* and round-trip through ``to_dict`` /
+    # ``from_dict`` with empty / "stable" defaults so any pre-existing
+    # ``skill_bank.jsonl`` loads without modification (verified by
+    # ``tests/test_shared_bank.py::test_legacy_skill_loads_without_new_fields``).
+    feasible_tasks: List[str] = field(default_factory=list)
+    verified_tasks: List[str] = field(default_factory=list)
+    derived_from: Optional[str] = None
+    confidence_tag: str = "stable"
 
     # ── Version management ───────────────────────────────────────
 
@@ -614,6 +704,10 @@ class Skill:
             "retired": self.retired,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "feasible_tasks": list(self.feasible_tasks),
+            "verified_tasks": list(self.verified_tasks),
+            "derived_from": self.derived_from,
+            "confidence_tag": self.confidence_tag,
         }
 
     @classmethod
@@ -642,6 +736,10 @@ class Skill:
             retired=d.get("retired", False),
             created_at=d.get("created_at", 0.0),
             updated_at=d.get("updated_at", 0.0),
+            feasible_tasks=list(d.get("feasible_tasks") or []),
+            verified_tasks=list(d.get("verified_tasks") or []),
+            derived_from=d.get("derived_from"),
+            confidence_tag=d.get("confidence_tag", "stable"),
         )
 
     @classmethod

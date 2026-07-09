@@ -8,7 +8,7 @@ Each script takes `--adapter` and `--bank` flags to select one cell of the matri
 
 | Adapter \ Bank | `none` | `first` (step 0) | `best` (final) |
 |---------------|--------|-------------------|-----------------|
-| `base` (vanilla Qwen3-8B) | `--adapter base` | — | — |
+| `base` (vanilla Qwen/Qwen3.5-9B) | `--adapter base` | — | — |
 | `sft` (SFT cold-start LoRA) | `--adapter sft --bank none` | `--adapter sft --bank first` | `--adapter sft --bank best` |
 | `coevo` (co-evolution LoRA) | `--adapter coevo --bank none` | — | `--adapter coevo --bank best` |
 

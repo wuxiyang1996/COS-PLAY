@@ -9,8 +9,9 @@
 #
 # Prerequisites:
 #   - Miniconda3 or Anaconda installed
-#   - Orak repo cloned as a sibling:
-#       Orak/  (https://github.com/nicholascpark/orak)
+#   - Orak repo cloned as a sibling of Multi-hop-Reasoning-VLM-Agent:
+#       git clone https://github.com/krafton-ai/Orak.git <parent>/Orak
+#     (the older nicholascpark/orak URL is private/unreachable)
 #   - For headless servers: Xvfb (apt install xvfb)
 #
 # Usage:
@@ -63,6 +64,28 @@ echo "  python:      $PYTHON_VERSION"
 echo "  repo dir:    $REPO_DIR"
 echo "============================================================"
 echo
+
+# ---------------------------------------------------------------------------
+# Step 0: System libraries (libGLU + Xvfb for pyglet/nes-py rendering)
+# ---------------------------------------------------------------------------
+# pyglet (used by nes-py) dlopen()s libGLU.so / libGL.so at runtime; without
+# them every super_mario env.reset() fails with
+#     ImportError: Library "GLU" not found.
+# We try a best-effort apt install; non-Debian distros / non-root users
+# should install equivalents manually (see README troubleshooting).
+if command -v apt-get >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
+        SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo "
+        echo "[0/4] Ensuring system GL/GLU libs + Xvfb are installed ..."
+        ${SUDO}apt-get update -qq >/dev/null 2>&1 || true
+        ${SUDO}apt-get install -y -qq --no-install-recommends \
+            libglu1-mesa libgl1-mesa-glx libosmesa6 freeglut3-dev xvfb \
+            >/dev/null 2>&1 || \
+            echo "  [WARN] could not auto-install libGLU; install manually:" \
+                 " apt install -y libglu1-mesa libgl1-mesa-glx xvfb"
+        echo
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1: Create conda environment

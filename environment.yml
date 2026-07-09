@@ -1,0 +1,64 @@
+# Dedicated env for the `vlm_wrapper` parser pipeline.
+#
+# Why a separate env?
+#   * `pyproject.toml` requires Python <3.12; the user's `base` is 3.12.
+#   * `pyproject.toml` pulls in vllm and other heavy training deps that the
+#     parser itself does not need.
+#   * Vision back-ends (Florence-2 needs `timm`, GroundingDINO + OmniParser
+#     need `ultralytics`/`easyocr`, the video tools need `decord`) are
+#     listed in the new `[vision]` extra but easier to pin here.
+#   * Pinning `transformers>=4.51,<4.56` keeps both the old (`box_threshold=`)
+#     and new (`threshold=`) GroundingDINO post-process kwargs working with
+#     the reflection-based call site we patched.
+#
+# Build:
+#     conda env create -f environment.yml
+#     conda activate vlm_wrapper
+#     pip install -e . --no-deps        # makes `vlm_wrapper` importable
+#                                       # without dragging in vllm/etc.
+
+name: vlm_wrapper
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24
+  - pip:
+      # ── PyTorch (CUDA 12.1 wheels) ───────────────────────────────────
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.4.1
+      - torchvision==0.19.1
+
+      # ── HuggingFace stack ────────────────────────────────────────────
+      - transformers>=4.51,<4.56
+      - accelerate>=0.30
+      - safetensors>=0.4
+      - sentence-transformers>=2.7.0
+
+      # ── Vision back-ends (these were the two unblocked bugs) ────────
+      - timm>=0.9               # required by Florence-2 image backbone
+      - easyocr>=1.7            # OCR fallback when paddleocr missing
+      - ultralytics>=8.0        # YOLO icon detector for OmniParser-v2
+      - opencv-python>=4.7
+      - decord>=0.6             # video frame decoding for tools_video.py
+
+      # ── OpenAI vision API + image utils ─────────────────────────────
+      - openai>=1.0
+      - Pillow>=10.0
+      - numpy<2.0               # keep 1.x for transformers + decord compat
+
+      # ── Schema / config / serialisation ─────────────────────────────
+      - pyyaml>=6.0
+      - omegaconf>=2.3.0
+
+      # ── Logging + CLI ───────────────────────────────────────────────
+      - loguru>=0.7.0
+      - coloredlogs
+      - tqdm
+      - python-dotenv
+
+      # ── Tests (needed for vlm_wrapper/tests live runs) ──────────────
+      - pytest>=7.0
+
+      # ── Modern NVML (silences the pynvml deprecation warning) ───────
+      - nvidia-ml-py

@@ -1,0 +1,75 @@
+<state>
+domain=image_qa
+task=tir_bench.109
+goal=Count distinct horizontal stripe colors and choose the matching option
+step=0
+
+<entities>
+e1[type=region, label=striped image, bid=null, pos=0,0,500,500, ontology=navigable_region]
+e2[type=object, label=red stripe, bid=null, pos=0,0,500,50, ontology=tracked_entity]
+e3[type=object, label=blue stripe, bid=null, pos=0,50,500,51, ontology=tracked_entity]
+e4[type=object, label=peach stripe, bid=null, pos=0,101,500,49, ontology=tracked_entity]
+e5[type=object, label=gold stripe, bid=null, pos=0,150,500,50, ontology=tracked_entity]
+e6[type=object, label=gray stripe, bid=null, pos=0,200,500,50, ontology=tracked_entity]
+e7[type=object, label=lime stripe, bid=null, pos=0,250,500,51, ontology=tracked_entity]
+e8[type=object, label=orange stripe, bid=null, pos=0,301,500,49, ontology=tracked_entity]
+e9[type=object, label=green stripe, bid=null, pos=0,350,500,50, ontology=tracked_entity]
+e10[type=object, label=magenta stripe, bid=null, pos=0,400,500,50, ontology=tracked_entity]
+e11[type=object, label=cyan stripe, bid=null, pos=0,450,500,50, ontology=tracked_entity]
+e12[type=text, label=option D, bid=null, pos=null, ontology=goal_indicator]
+
+<attributes>
+e1.state=visible
+e12.value=10
+
+<affordances>
+e12.affords=[select]
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e10)
+contains(e1,e11)
+adjacent(e2,e3)
+adjacent(e3,e4)
+adjacent(e4,e5)
+adjacent(e5,e6)
+adjacent(e6,e7)
+adjacent(e7,e8)
+adjacent(e8,e9)
+adjacent(e9,e10)
+adjacent(e10,e11)
+grouped(e2,e3,e4)
+grouped(e5,e6,e7)
+grouped(e8,e9,e10)
+
+<state_flags>
+progress=0.9
+phase=late
+scene_type=image_qa
+error=null
+dialog_open=false
+input_pending=true
+
+<targets>
+target=e12
+blocker=null
+constraint=Count distinct stripe colors; there are 10
+candidate_set=[e12]
+history_anchor=null
+
+<uncertainty>
+e4.label=medium
+e11.label=medium
+
+<actions>
+a1=select("D")
+a2=select("10")
+a3=wait_until()
+</state>

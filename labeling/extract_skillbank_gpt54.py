@@ -113,7 +113,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-MODEL_GPT54 = "gpt-5.4"
+try:
+    from common.models import BACKBONE_SFT_TEACHER_MODEL as _SFT_TEACHER_MODEL
+except Exception:  # pragma: no cover
+    _SFT_TEACHER_MODEL = "gpt-5.5"
+
+MODEL_GPT54 = _SFT_TEACHER_MODEL  # historical alias; new code: import the constant
 
 DEFAULT_INPUT_DIR = SCRIPT_DIR / "output" / "gpt54"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output" / "gpt54_skillbank"
@@ -132,6 +137,22 @@ _TAG_ALIASES: Dict[str, str] = {
 }
 
 _TAG_RE = re.compile(r"\[(\w+)\]\s*")
+
+# ``[OPERATOR/SUBGOAL] note`` — current canonical labelling form.
+# The local fallback segmenter (``intention_based_segmentation``) reads the
+# composite ``OP/SG`` so adjacent steps with the same operator but different
+# subgoals do not collapse into one ``COMMIT`` segment.
+_DUAL_TAG_RE = re.compile(r"\[\s*([A-Za-z]+)\s*/\s*([A-Za-z]+)\s*\]")
+
+
+def _sanitize_skill_id_fragment(fragment: str) -> str:
+    """Make a tag string safe for skill_id construction.
+
+    The composite ``OP/SG`` form contains ``/``; we replace it with ``_``
+    so the resulting ``skill_id`` is filesystem-friendly even though no
+    current path uses it directly.
+    """
+    return (fragment or "").lower().replace("/", "_")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -686,10 +707,19 @@ def intention_based_segmentation(
 
         for i, exp in enumerate(exps):
             intent = exp.get("intentions", "")
-            m = _TAG_RE.match(intent.strip())
-            tag = m.group(1).upper() if m else "EXECUTE"
-            if tag not in _SUBGOAL_TAG_SET:
-                tag = _TAG_ALIASES.get(tag, "EXECUTE")
+            stripped = intent.strip()
+            md = _DUAL_TAG_RE.match(stripped)
+            if md:
+                op = md.group(1).upper()
+                sg = md.group(2).upper()
+                tag = f"{op}/{sg}"
+            else:
+                m = _TAG_RE.match(stripped)
+                raw = m.group(1).upper() if m else "EXECUTE"
+                if raw in _SUBGOAL_TAG_SET:
+                    tag = raw
+                else:
+                    tag = _TAG_ALIASES.get(raw, raw if raw else "EXECUTE")
 
             if tag != current_tag:
                 if current_tag is not None and i > seg_start:
@@ -748,7 +778,7 @@ def intention_based_segmentation(
     skill_idx = 0
 
     for tag, segs in sorted(by_tag.items()):
-        skill_id = f"skill_{game_name}_{tag.lower()}_{skill_idx}"
+        skill_id = f"skill_{game_name}_{_sanitize_skill_id_fragment(tag)}_{skill_idx}"
         skill_idx += 1
 
         total_steps = sum(s["end"] - s["start"] for s in segs)
@@ -786,11 +816,12 @@ def intention_based_segmentation(
                 if cnt / n_pred_segs >= min_freq:
                     real_eff_del.add(k)
 
+        _tag_safe = _sanitize_skill_id_fragment(tag)
         contract = SkillEffectsContract(
             skill_id=skill_id,
-            eff_add=real_eff_add if real_eff_add else {f"{tag.lower()}_completed"},
+            eff_add=real_eff_add if real_eff_add else {f"{_tag_safe}_completed"},
             eff_del=real_eff_del,
-            eff_event=agg_event if agg_event else {f"tag_{tag.lower()}"},
+            eff_event=agg_event if agg_event else {f"tag_{_tag_safe}"},
             n_instances=len(segs),
         )
 
@@ -938,6 +969,72 @@ def populate_skill_protocols(
     return updated
 
 
+def _flush_module_io_to_disk(output_dir: Path, game_name: str) -> None:
+    """Persist per-LoRA module I/O recorders accumulated for one game.
+
+    Drains the two thread-safe in-memory recorders that wrap every LoRA
+    target's prompt/response and writes them to JSONL files alongside
+    ``skill_bank.jsonl``:
+
+    * ``coldstart_io_all.jsonl`` — every record produced by modules that
+      call into :mod:`skill_agents.coldstart_io` (CONTRACT / CURATOR
+      LoRAs plus boundary_proposal, skill_retrieval, pipeline aux).
+    * ``teacher_io_coldstart.jsonl`` — every record produced by the
+      SEGMENT teacher (:mod:`skill_agents.infer_segmentation.llm_teacher`).
+
+    These two files are the **canonical per-module I/O corpus** that the
+    deferred Skill-Bank GRPO stage will consume (one row per training
+    example per LoRA target). Failure to flush is non-fatal — the bank
+    itself is already on disk by the time we get here.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from skill_agents.coldstart_io import flush as _flush_coldstart
+        cs_records = _flush_coldstart()
+    except Exception as exc:
+        cs_records = []
+        print(f"    [WARN] coldstart_io flush failed: {exc}")
+    if cs_records:
+        cs_path = output_dir / "coldstart_io_all.jsonl"
+        try:
+            with open(cs_path, "w", encoding="utf-8") as f:
+                for rec in cs_records:
+                    rec.setdefault("game", game_name)
+                    f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+            by_mod: Dict[str, int] = {}
+            for rec in cs_records:
+                m = rec.get("module", "unknown")
+                by_mod[m] = by_mod.get(m, 0) + 1
+            print(f"    Cold-start I/O → {cs_path} ({len(cs_records)} records: {by_mod})")
+        except Exception as exc:
+            print(f"    [WARN] Failed to write {cs_path}: {exc}")
+
+    try:
+        from skill_agents.infer_segmentation.llm_teacher import (
+            flush_teacher_io_records as _flush_teacher,
+        )
+        teacher_records = _flush_teacher()
+    except Exception as exc:
+        teacher_records = []
+        print(f"    [WARN] teacher I/O flush failed: {exc}")
+    if teacher_records:
+        teacher_path = output_dir / "teacher_io_coldstart.jsonl"
+        try:
+            with open(teacher_path, "w", encoding="utf-8") as f:
+                for rec in teacher_records:
+                    rec.setdefault("game", game_name)
+                    f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+            by_fn: Dict[str, int] = {}
+            for rec in teacher_records:
+                fn = rec.get("function", "unknown")
+                by_fn[fn] = by_fn.get(fn, 0) + 1
+            print(f"    Teacher I/O    → {teacher_path} ({len(teacher_records)} records: {by_fn})")
+        except Exception as exc:
+            print(f"    [WARN] Failed to write {teacher_path}: {exc}")
+
+
 def extract_skills_for_game(
     episodes_data: List[Dict[str, Any]],
     game_name: str,
@@ -983,6 +1080,34 @@ def extract_skills_for_game(
 
     agent = SkillBankAgent(config=config)
 
+    # ── Reset per-module I/O recorders ─────────────────────────────────
+    # The three LoRA-target modules each route their prompts/responses
+    # through a thread-safe recorder so the (input, output) pair for
+    # every call can be persisted at the end of the run for this game:
+    #
+    #   * ``skill_agents.coldstart_io`` — CONTRACT (Stage 3) + CURATOR
+    #     (Stage 4 split / merge / refine) plus boundary_proposal /
+    #     skill_retrieval / pipeline auxiliary calls.
+    #   * ``skill_agents.infer_segmentation.llm_teacher`` — SEGMENT
+    #     (Stage 2) teacher rankings, transition rankings, pairwise
+    #     choices, skill naming.
+    #
+    # Resetting at the start ensures we capture only this game's records,
+    # even when a single Python process processes multiple games back to
+    # back. The corresponding flush is at the bottom of this function.
+    try:
+        from skill_agents.coldstart_io import reset as _reset_coldstart
+        _reset_coldstart()
+    except Exception:
+        pass
+    try:
+        from skill_agents.infer_segmentation.llm_teacher import (
+            reset_teacher_io_records as _reset_teacher,
+        )
+        _reset_teacher()
+    except Exception:
+        pass
+
     episodes: List[Episode] = []
     for ep_data in episodes_data:
         try:
@@ -992,6 +1117,7 @@ def extract_skills_for_game(
 
     if not episodes:
         print(f"    [WARN] No episodes to segment for {game_name}")
+        _flush_module_io_to_disk(output_dir, game_name)
         return agent, {}, []
 
     # ── Stage 1+2: boundary proposal + segmentation ──
@@ -1245,6 +1371,12 @@ def extract_skills_for_game(
             print(f"    Sub-episodes ({len(all_sub_episodes)}) → {sub_ep_path}")
         except Exception as exc:
             print(f"    [WARN] Failed to save sub_episodes: {exc}")
+
+    # ── Persist per-module I/O recorders ──
+    # Mirrors ``skill_agents.extract_skillbank.extract_skillbank_grpo_gpt54``
+    # so env_wrappers and gym-v outputs both expose the same per-LoRA
+    # cold-start training corpus.
+    _flush_module_io_to_disk(output_dir, game_name)
 
     return agent, skill_catalog, all_sub_episodes
 
@@ -1726,6 +1858,13 @@ def main():
                 traceback.print_exc()
             skill_catalog = {}
             sub_episodes = []
+            # Even on failure, drain whatever partial per-module I/O the
+            # LoRA recorders accumulated before the crash so the Skill
+            # Bank GRPO trainer still gets the up-to-failure prompts.
+            try:
+                _flush_module_io_to_disk(game_out_dir, game)
+            except Exception:
+                pass
 
         # ── Save annotated episodes ──
         if args.save_annotated:
@@ -1762,24 +1901,31 @@ def main():
         }
         all_stats.append(stat)
 
-        # Per-game summary
+        # Per-game summary (canonical schema — see labeling/readme.md
+        # "Unified cross-corpus skill index").
         summary_path = game_out_dir / "extraction_summary.json"
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump({
-                "game": game,
+                "corpus": "env_wrappers",
+                "source_name": game,
+                "game": game,  # back-compat alias for readers that key on "game"
                 "model": args.model,
+                "pipeline": "skill_agents",
                 "timestamp": datetime.now().isoformat(),
                 "input_dir": str(input_dir / game),
                 **stat,
             }, f, indent=2, ensure_ascii=False)
 
-        # Per-game skill catalog
+        # Per-game skill catalog (canonical schema).
         if skill_catalog:
             catalog_path = game_out_dir / "skill_catalog.json"
             with open(catalog_path, "w", encoding="utf-8") as f:
                 json.dump({
+                    "corpus": "env_wrappers",
+                    "source_name": game,
                     "game": game,
                     "model": args.model,
+                    "pipeline": "skill_agents",
                     "timestamp": datetime.now().isoformat(),
                     "n_skills": len(skill_catalog),
                     "skills": list(skill_catalog.values()),
@@ -1855,6 +2001,26 @@ def main():
         with open(combined_path, "w", encoding="utf-8") as f:
             json.dump(combined, f, indent=2, ensure_ascii=False)
         print(f"  Full catalog:       {combined_path}")
+
+    # ── Cross-game unified index (canonical, corpus-tagged) ────────────
+    # Mirrors the gym-v driver. The aggregator walks every per-game
+    # subfolder of ``output_dir`` and emits ``_unified/skill_index.jsonl``
+    # + ``_unified/skill_catalog_all.json`` + ``_unified/skill_rag_index.json``,
+    # all corpus-tagged so a downstream cross-corpus merge with the gym-v
+    # output root drops in cleanly.
+    try:
+        from labeling.unify_skill_index import unify_roots as _unify_roots
+        unify_summary = _unify_roots(
+            roots=[output_dir], output_dir=output_dir,
+            pipeline="skill_agents", verbose=args.verbose,
+        )
+        print(f"  Unified index:      {unify_summary['skill_index_path']}")
+        print(f"                      ({unify_summary['n_skills']} skills "
+              f"across {unify_summary['n_sources']} source(s))")
+    except Exception as exc:
+        print(f"  [WARN] Unified index aggregation failed: {exc}")
+        if args.verbose:
+            traceback.print_exc()
 
     print(f"{'=' * 78}\n")
 

@@ -146,7 +146,7 @@ def _extract_predicates(experiences: list) -> List[Optional[dict]]:
         intent = getattr(exp, "intentions", None)
         if intent is not None:
             preds["intention"] = intent
-            tag = parse_intention_tag(intent)
+            tag = parse_intention_tag(intent, mode="composite")
             if tag != "UNKNOWN":
                 preds[f"tag_{tag.lower()}"] = 1.0
                 preds[f"{tag.lower()}_completed"] = float(
@@ -193,7 +193,7 @@ def _build_intention_fit_fn(
     raw_tags: List[str] = []
     for exp in experiences:
         intent = getattr(exp, "intentions", None)
-        tag = parse_intention_tag(intent) if intent else "UNKNOWN"
+        tag = parse_intention_tag(intent, mode="composite") if intent else "UNKNOWN"
         raw_tags.append(tag)
 
     if all(t == "UNKNOWN" for t in raw_tags):
@@ -630,7 +630,7 @@ def _relabel_segments_by_intention(
     raw_tags = []
     for exp in experiences:
         intent = getattr(exp, "intentions", None)
-        tag = parse_intention_tag(intent) if intent else "UNKNOWN"
+        tag = parse_intention_tag(intent, mode="composite") if intent else "UNKNOWN"
         raw_tags.append(tag)
 
     if all(t == "UNKNOWN" for t in raw_tags):

@@ -2,7 +2,7 @@
 # ======================================================================
 #  Super Mario ablation: adapter evaluation (no skill bank variants)
 #
-#  Adapter options:   base — vanilla Qwen3-8B, no LoRA
+#  Adapter options:   base — vanilla Qwen/Qwen3.5-9B, no LoRA
 #                     sft  — SFT cold-start LoRA
 #
 #  Requires orak-mario conda env (gym-super-mario-bros / nes_py need
@@ -73,7 +73,7 @@ fi
 
 # ── Configurable parameters ─────────────────────────────────────────
 RUNS_DIR="${RUNS_DIR:-${PROJECT_ROOT}/runs}"
-BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3-8B}"
+BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3.5-9B}"
 EVAL_GPUS="${EVAL_GPUS:-0}"
 VLLM_PORT="${VLLM_PORT:-8020}"
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
@@ -219,7 +219,7 @@ ci = 1.96 * se
 delta = mean - coevo_reward
 pct = (delta / coevo_reward * 100) if coevo_reward != 0 else 0
 
-labels = {"base": "Base Qwen3-8B (no LoRA, no bank)", "sft": "SFT cold-start (no bank)"}
+labels = {"base": "Base Qwen/Qwen3.5-9B (no LoRA, no bank)", "sft": "SFT cold-start (no bank)"}
 print(f"  Super Mario — {labels.get(adapter_type, adapter_type)}")
 print(f"    Episodes:    {n}")
 print(f"    Mean±CI:     {mean:.2f} ± {ci:.2f}")

@@ -1,0 +1,162 @@
+{
+  "osworld": {
+    "pool": {
+      "size": 120,
+      "axis_distribution": {
+        "vs_code": 12,
+        "chrome": 12,
+        "gimp": 12,
+        "libreoffice_impress": 13,
+        "thunderbird": 13,
+        "os": 12,
+        "libreoffice_calc": 12,
+        "multi_apps": 10,
+        "libreoffice_writer": 12,
+        "vlc": 3,
+        "base_setup": 9
+      }
+    },
+    "holdout": {
+      "size": 30,
+      "axis_distribution": {
+        "os": 3,
+        "libreoffice_calc": 3,
+        "multi_apps": 3,
+        "libreoffice_impress": 3,
+        "chrome": 3,
+        "vlc": 1,
+        "vs_code": 3,
+        "base_setup": 2,
+        "gimp": 3,
+        "libreoffice_writer": 3,
+        "thunderbird": 3
+      }
+    }
+  },
+  "visual_toolbench": {
+    "pool": {
+      "size": 300,
+      "axis_distribution": {
+        "physics": 16,
+        "biology": 18,
+        "finance": 53,
+        "sports": 54,
+        "maths": 18,
+        "medical": 54,
+        "chemistry": 16,
+        "generalist": 53,
+        "engineering": 18
+      }
+    },
+    "holdout": {
+      "size": 100,
+      "axis_distribution": {
+        "maths": 6,
+        "medical": 17,
+        "finance": 18,
+        "engineering": 6,
+        "sports": 17,
+        "generalist": 18,
+        "chemistry": 6,
+        "biology": 6,
+        "physics": 6
+      }
+    }
+  },
+  "tir_bench": {
+    "pool": {
+      "size": 300,
+      "axis_distribution": {
+        "spot_difference": 23,
+        "instrument": 24,
+        "ocr": 23,
+        "color": 24,
+        "maze": 23,
+        "jigsaw": 22,
+        "word_search": 24,
+        "rotation_game": 22,
+        "symbolic": 23,
+        "math": 23,
+        "contrast": 23,
+        "refcoco": 23,
+        "visual_search": 23
+      }
+    },
+    "holdout": {
+      "size": 100,
+      "axis_distribution": {
+        "jigsaw": 8,
+        "contrast": 8,
+        "refcoco": 8,
+        "symbolic": 8,
+        "math": 7,
+        "color": 7,
+        "word_search": 7,
+        "ocr": 8,
+        "maze": 8,
+        "rotation_game": 8,
+        "visual_search": 8,
+        "instrument": 7,
+        "spot_difference": 8
+      }
+    }
+  },
+  "video_holmes": {
+    "pool": {
+      "size": 1000,
+      "axis_distribution": {
+        "PAR": 143,
+        "TA": 142,
+        "CTI": 143,
+        "IMC": 143,
+        "SR": 143,
+        "TCI": 142,
+        "MHR": 144
+      }
+    },
+    "holdout": {
+      "size": 200,
+      "axis_distribution": {
+        "CTI": 29,
+        "TA": 29,
+        "TCI": 29,
+        "SR": 29,
+        "IMC": 28,
+        "MHR": 27,
+        "PAR": 29
+      }
+    }
+  },
+  "siv_bench": {
+    "pool": {
+      "size": 400,
+      "axis_distribution": {
+        "Factual Prediction": 40,
+        "Facial Expression Recognition": 40,
+        "Counterfactual Prediction": 40,
+        "Environment Perception": 40,
+        "Human Attribute Identification": 40,
+        "Attitude Inference": 40,
+        "Emotion Inference": 40,
+        "Action Recognition": 40,
+        "Relation Inference": 40,
+        "Intent Inference": 40
+      }
+    },
+    "holdout": {
+      "size": 100,
+      "axis_distribution": {
+        "Attitude Inference": 10,
+        "Action Recognition": 10,
+        "Factual Prediction": 10,
+        "Emotion Inference": 10,
+        "Human Attribute Identification": 10,
+        "Intent Inference": 10,
+        "Facial Expression Recognition": 10,
+        "Counterfactual Prediction": 10,
+        "Environment Perception": 10,
+        "Relation Inference": 10
+      }
+    }
+  }
+}

@@ -175,8 +175,6 @@ def make_env(game_name: str, **kwargs: Any) -> Any:
 
     # Try env_wrappers directly
     wrapper_map = {
-        "avalon": "AvalonNLWrapper",
-        "diplomacy": "DiplomacyNLWrapper",
         "gamingagent": "GamingAgentNLWrapper",
     }
     if game_name in wrapper_map:

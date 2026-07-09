@@ -29,19 +29,80 @@ output/
 **/Qwen3-8B/
 *.log
 
-# ── Cold-start cache ────────────────────────────────────────────
+# ── OSWorld VM disk image (~23 GB Ubuntu.qcow2 from HuggingFace) ─
+docker_vm_data/
+**/docker_vm_data/
+
+# ── Cold-start cache + outputs ──────────────────────────────────
 cold_start/cache/
 cold_start/backup/
 cold_start/output/
+# Actor cold-start outputs (browsergym / gymv / osworld / visual-reasoning / smoke)
+Cold-start-out/
+Cold-start-out-*/
+/Cold-start-out/
+/Cold-start-out-*/
+# Top-level cache produced by cold-start runs
+/cache/
+
+# ── Qwen vLLM baseline outputs (run_qwen_vllm_baselines.sh) ─────
+qwen-baselines-out/
+/qwen-baselines-out/
+qwen-baselines-out-transfer/
+/qwen-baselines-out-transfer/
+openrouter-transfer-baselines-out/
+/openrouter-transfer-baselines-out/
+qwen-api-baselines-out/
+/qwen-api-baselines-out/
+
+# ── Local symlinks into out-of-tree assets (evaluation_dataset / latest) ─
+/latest
+cold_start/evaluation_dataset/holdout/examples
+cold_start/evaluation_dataset/pool/examples
+
+# ── OpenRouter baseline outputs (run_openrouter_baselines.sh) ───
+openrouter-baselines-out/
+/openrouter-baselines-out/
 
 # ── Labeling outputs ────────────────────────────────────────────
 labeling/backup/
 labeling/output/
+# Per-run intention-label dumps (label_intentions_gpt54.py output)
+labeling/intentions_out/
 
 # ── Skill bank extraction outputs ───────────────────────────────
 skill_agents/extract_skillbank/output/
 skill_agents/extract_skillbank/backup/
 skill_agents/extract_skillbank/backup_2/
+# Top-level cold-start labeling skill-bank dump
+skill_bank_sft/
+# Per-run skill-discovery dumps (run_skill_discovery.sh output)
+labeling/skill_bank_out/
+# Per-run skill-conditioned action labels (run_label_skill_actions.sh output)
+labeling/skill_actions_out/
+# Cross-corpus extraction outputs (skill_transfer_test/extract/runner.py)
+skill_transfer_test/skill_bank_local/
+cross_domain_results/
+# Per-run decision-SFT jsonl bundles (labeling/build_decision_sft_jsonl.py)
+labeling/decision_sft_jsonl/
+
+# ── Skill Crafter offline mirror outputs ────────────────────────
+# Per-run output directories of labeling_supplement/{decide_skill_crafting,
+# reflect_per_episode}_gpt54.py — proposals.jsonl + decision_trace.json +
+# reflection.json artefacts produced by the offline Crafter mirror.
+labeling_supplement/crafter_proposals_out/
+labeling_supplement/episode_reflections_out/
+# Per-run decide-promotion outputs (labeling_supplement/decide_promotion_gpt54.py)
+labeling_supplement/promotion_decisions_out/
+
+# ── Harness I/O dump per-run artifacts ──────────────────────────
+# Per-run dumps from labeling_supplement/dump_harness_io_gpt54.py and
+# the cross-eligibility bypass probe. Keep _phase0_report.md and
+# _phase0_cross_eligibility_probe.json checked in (small, canonical
+# Phase-0 numbers); ignore the bulky per-step JSON dumps and the
+# scratch fused-bank dir used to drive the probe.
+labeling_supplement/harness_io_out/run_*/
+labeling_supplement/harness_io_out/_fused_bank_*/
 
 # ── Evaluation / test outputs ───────────────────────────────────
 test_rollout/
@@ -57,3 +118,15 @@ eval_results/**/raw/
 *~
 .DS_Store
 Thumbs.db
+
+
+data/
+/data
+
+# Local HuggingFace hub/cache (benchmark downloads, offline hub)
+.hf_cache/
+
+.env
+
+
+out/

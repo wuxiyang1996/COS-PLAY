@@ -1,0 +1,26 @@
+# gymv-smoke-v1 — fast-loop non-regression suite (Stage-4)
+#
+# Loaded by orchestrator/eval_suite.py (T2.2) and consumed by
+# GateService._run_non_regression. Once published, every field except
+# `description` is immutable: a new suite version requires a new
+# `suite_id`/`version` pair.
+#
+# Cold-start dataset slice: cold_start/evaluation_dataset/manifest.json
+# (gymv source-domain only — visual_holmes / siv_bench / tir_bench are
+# transfer probes, not gated by G5 in S2).
+
+suite_id: gymv-smoke-v1
+version: "1.0.0"
+description: "Fast-loop GRPO non-regression suite for the gymv source domain."
+
+datasets:
+  - bench: gymv
+    split: holdout
+    n: 200
+    source_manifest: cold_start/evaluation_dataset/manifest.json
+
+metric_keys:
+  - gymv_holdout.pass_rate
+  - gymv_holdout.joint_success
+  - gymv_holdout.unsupported_reasoning
+  - gymv_holdout.avg_hop_cost

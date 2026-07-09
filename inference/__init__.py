@@ -6,8 +6,6 @@
 # CLI entry points:
 #   python -m inference.run_inference          (multi-game batch runner)
 #   python -m inference.run_qwen3_8b_eval      (main evaluation harness)
-#   python -m inference.run_qwen3_avalon_matched  (Avalon training-matched eval)
-#   python -m inference.run_diplomacy_discrete_eval  (Diplomacy discrete action eval)
 #   python -m inference.run_academic_benchmarks  (MMLU-Pro, Math-500)
 
 from .run_decision_agent import (

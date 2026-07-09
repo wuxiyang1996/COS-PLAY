@@ -29,6 +29,23 @@ from trainer.coevolution.vllm_client import AsyncVLLMClient
 logger = logging.getLogger(__name__)
 
 
+def _critical_actions_for(game: str, valid_actions: List[str]) -> List[str]:
+    """Return the subset of :data:`GAME_CRITICAL_ACTIONS` that are
+    actually exposed for *game* this step.  Imports lazily so callers
+    that don't pass a real game string (eval / smoke tests) avoid
+    pulling the whole config module into the hot path on every call.
+    """
+    try:
+        from trainer.coevolution.config import GAME_CRITICAL_ACTIONS
+    except Exception:                                        # pragma: no cover
+        return []
+    desired = GAME_CRITICAL_ACTIONS.get(game) or []
+    if not desired:
+        return []
+    valid_set = set(valid_actions)
+    return [a for a in desired if a in valid_set]
+
+
 # ---------------------------------------------------------------------------
 # Lazy imports — these pull in heavyweight packages that live in the project
 # ---------------------------------------------------------------------------
@@ -39,17 +56,33 @@ _IMPORTS_CACHE: Dict[str, Any] = {}
 ORAK_GAMES_SET = {"super_mario"}
 # Orak games that MUST use SubprocessEnv (nes_py / NumPy 2.x incompatibility)
 ORAK_SUBPROCESS_GAMES = {"super_mario"}
-# Games that use AgentEvolver wrappers (env_wrappers)
-EVOLVER_GAMES_SET = {"diplomacy", "avalon"}
 # Games that use GamingAgent make_gaming_env
 GAMINGAGENT_GAMES = {
     "twenty_forty_eight", "candy_crush", "tetris",
 }
+# Games that use Gym-V Temporal/* (stable-retro Genesis) via
+# env_wrappers.gymv_temporal_nl_wrapper.make_gymv_temporal_env. The set of
+# wired slugs lives in that module's GYMV_TEMPORAL_GAMES dict (8 games for
+# the default benchmark scope — the 4 Phase-1 source games plus the 4
+# Phase-2 holdouts from
+# training_notes/coevo-3phase-cross-game-ood-transfer-plan.md §4.1 / §7.1).
+# We import the dict lazily inside _lazy_imports() so module-import time
+# stays cheap when gym_v / stable-retro / ROMs aren't installed.
+GYMV_TEMPORAL_GAMES_SET: set = set()  # populated by _lazy_imports()
+# Gym-V games MUST use SubprocessEnv: stable-retro's Genesis emulator is
+# a process-singleton ("Cannot create multiple emulator instances per
+# process"), so any concurrent in-process episodes after the first one
+# crash and return ``EpisodeResult(steps=0)`` — i.e. ``1/8 ok`` on the
+# rollout collector log line.  Subprocess isolation gives each
+# concurrent episode its own emulator and restores 8/8 GRPO rollouts.
+# Set to the same membership as GYMV_TEMPORAL_GAMES_SET (populated lazily
+# below) — keep them in sync.
+GYMV_SUBPROCESS_GAMES: set = set()  # populated by _lazy_imports() (mirror)
 
 
 def _lazy_imports():
     """Return project modules, imported once and cached."""
-    global _IMPORTS_CACHE
+    global _IMPORTS_CACHE, GYMV_TEMPORAL_GAMES_SET, GYMV_SUBPROCESS_GAMES
     if not _IMPORTS_CACHE:
         from env_wrappers.game_configs import GAME_CONFIGS
         from env_wrappers.gym_like import make_gaming_env
@@ -62,15 +95,30 @@ def _lazy_imports():
 
         from env_wrappers.subprocess_env import SubprocessEnv
 
-        # Evolver wrappers (Diplomacy, Avalon)
+        # Gym-V Temporal/* (stable-retro Genesis) — Phase-1 source +
+        # Phase-2 holdout games. Import is best-effort: if gym_v /
+        # stable-retro aren't installed, the slug set stays empty and
+        # any --games gymv_<slug> request falls through to the
+        # GAME_CONFIGS-not-found error instead of crashing the whole
+        # runner at import time.
         try:
-            from env_wrappers.diplomacy_nl_wrapper import DiplomacyNLWrapper
-        except ImportError:
-            DiplomacyNLWrapper = None
-        try:
-            from env_wrappers.avalon_nl_wrapper import AvalonNLWrapper
-        except ImportError:
-            AvalonNLWrapper = None
+            from env_wrappers.gymv_temporal_nl_wrapper import (
+                GYMV_TEMPORAL_GAMES,
+                make_gymv_temporal_env,
+            )
+            GYMV_TEMPORAL_GAMES_SET.update(GYMV_TEMPORAL_GAMES.keys())
+            # Mirror the slug set into the subprocess gate; we always
+            # subprocess-isolate stable-retro envs (process-singleton
+            # constraint, see GYMV_SUBPROCESS_GAMES docstring).
+            GYMV_SUBPROCESS_GAMES.update(GYMV_TEMPORAL_GAMES.keys())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "env_wrappers.gymv_temporal_nl_wrapper unavailable (%s); "
+                "Gym-V Temporal/* games will not be runnable in this process.",
+                exc,
+            )
+            GYMV_TEMPORAL_GAMES = {}
+            make_gymv_temporal_env = None
 
         from decision_agents.agent_helper import (
             build_rag_summary,
@@ -90,10 +138,10 @@ def _lazy_imports():
             "GAME_CONFIGS": GAME_CONFIGS,
             "make_gaming_env": make_gaming_env,
             "make_orak_env": make_orak_env,
+            "make_gymv_temporal_env": make_gymv_temporal_env,
+            "GYMV_TEMPORAL_GAMES": GYMV_TEMPORAL_GAMES,
             "SubprocessEnv": SubprocessEnv,
             "GamingAgentNLWrapper": GamingAgentNLWrapper,
-            "DiplomacyNLWrapper": DiplomacyNLWrapper,
-            "AvalonNLWrapper": AvalonNLWrapper,
             "build_rag_summary": build_rag_summary,
             "compact_text_observation": compact_text_observation,
             "extract_game_facts": extract_game_facts,
@@ -159,127 +207,6 @@ def _infer_tag_from_text(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Adapters for multi-agent / complex-action games
-# ---------------------------------------------------------------------------
-
-class _AvalonAdapter:
-    """Wraps AvalonNLWrapper (single-agent) to provide discrete action_names."""
-
-    def __init__(self, env):
-        self._env = env
-        self._last_info: dict = {}
-
-    def reset(self):
-        obs, info = self._env.reset()
-        info["action_names"] = self._build_actions(info)
-        return obs, info
-
-    def step(self, action_str: str):
-        real = self._convert(action_str, self._last_info)
-        obs, reward, term, trunc, info = self._env.step(real)
-        info["action_names"] = self._build_actions(info)
-        self._last_info = info
-        return obs, reward, term, trunc, info
-
-    def _build_actions(self, info):
-        self._last_info = info
-        phase = info.get("phase", -1)
-        if phase == 1:
-            return ["approve", "reject"]
-        if phase == 2:
-            return ["pass", "fail"]
-        if phase == 0:
-            team_size = info.get("team_size", 2)
-            n = self._env.num_players
-            from itertools import combinations
-            combos = list(combinations(range(n), team_size))
-            return [",".join(str(p) for p in c) for c in combos[:15]]
-        if phase == 3:
-            return [str(i) for i in range(self._env.num_players)]
-        return ["wait"]
-
-    def _convert(self, action_str: str, info):
-        phase = info.get("phase", -1)
-        if phase == 0:
-            try:
-                return [int(x) for x in action_str.split(",")]
-            except ValueError:
-                ts = info.get("team_size", 2)
-                return list(range(ts))
-        if phase == 3:
-            try:
-                return int(action_str)
-            except ValueError:
-                return 0
-        return action_str
-
-    def close(self):
-        if hasattr(self._env, "close"):
-            self._env.close()
-
-    @property
-    def done(self):
-        return self._env.done
-
-
-class _DiplomacyAdapter:
-    """Wraps DiplomacyNLWrapper (single-agent) to provide discrete action_names.
-
-    Presents each unit's possible orders as flat choices.  The LLM picks one
-    order; unmentioned units use random valid orders.
-    """
-
-    def __init__(self, env):
-        self._env = env
-        self._last_info = {}
-
-    def reset(self):
-        obs, info = self._env.reset()
-        info["action_names"] = self._build_actions(info)
-        self._last_info = info
-        return obs, info
-
-    def step(self, action_str: str):
-        orders = self._make_orders(action_str)
-        obs, reward, term, trunc, info = self._env.step(orders)
-        info["action_names"] = self._build_actions(info)
-        self._last_info = info
-        return obs, reward, term, trunc, info
-
-    def _build_actions(self, info):
-        cp = self._env._controlled_power
-        possible = info.get("possible_orders", {}).get(cp, {})
-        flat: List[str] = []
-        for loc, orders in possible.items():
-            flat.extend(orders[:8])
-        if not flat:
-            return ["hold"]
-        return flat[:20]
-
-    def _make_orders(self, action_str: str) -> list:
-        cp = self._env._controlled_power
-        possible = self._last_info.get("possible_orders", {}).get(cp, {})
-        orders: List[str] = []
-        used = False
-        for loc, loc_orders in possible.items():
-            if not used and action_str in loc_orders:
-                orders.append(action_str)
-                used = True
-            else:
-                if loc_orders:
-                    orders.append(random.choice(loc_orders))
-        return orders
-
-    def close(self):
-        if hasattr(self._env, "close"):
-            self._env.close()
-
-    @property
-    def done(self):
-        return self._env.done
-
-
-# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
@@ -314,43 +241,6 @@ class EpisodeResult:
     role: str = ""          # e.g. "Merlin", "FRANCE"
     side: str = ""          # e.g. "good", "evil", or power name
     role_index: int = -1    # player index (Avalon) or power ordinal
-
-
-# ---------------------------------------------------------------------------
-# Stage / side inference for multi-role games
-# ---------------------------------------------------------------------------
-
-def _detect_avalon_stage(step: int, max_steps: int, info: dict) -> str:
-    """Return Avalon game stage based on quest progress and phase."""
-    phase = info.get("phase", -1)
-    if phase == 3:
-        return "assassination"
-    quest = info.get("quest", info.get("current_quest", 0))
-    if quest <= 1:
-        return "early_quests"
-    if quest <= 3:
-        return "mid_quests"
-    return "late_quests"
-
-
-def _detect_diplomacy_stage(step: int, max_steps: int, info: dict) -> str:
-    """Return Diplomacy game stage based on phase progression."""
-    phase_name = info.get("phase_name", "")
-    if phase_name:
-        year_match = re.search(r"(\d{4})", phase_name)
-        if year_match:
-            year = int(year_match.group(1))
-            if year <= 1902:
-                return "opening"
-            if year <= 1907:
-                return "midgame"
-            return "endgame"
-    ratio = step / max(max_steps, 1)
-    if ratio < 0.25:
-        return "opening"
-    if ratio < 0.65:
-        return "midgame"
-    return "endgame"
 
 
 # ---------------------------------------------------------------------------
@@ -533,10 +423,6 @@ async def _generate_intention(
         "  candy_crush, moves=4, target=500 → [CLEAR] maximize cascade combos now\n"
         "  candy_crush, special candy available → [EXECUTE] activate combo for big score\n"
         "  candy_crush, board cluttered → [OPTIMIZE] clear blockers to open matches\n"
-        "  avalon, suspicious player → [DEFEND] block suspected spy from mission\n"
-        "  avalon, team forming → [ATTACK] push to lead the next mission\n"
-        "  diplomacy, ally requesting support → [BUILD] strengthen alliance for next turn\n"
-        "  diplomacy, unexplored border → [EXPLORE] scout neighbor's intentions\n"
     )
 
     prompt = (
@@ -627,6 +513,15 @@ def _format_skill_guidance_for_prompt(
 
 
 def _format_candidates_for_selection(candidates: List[Dict[str, Any]]) -> str:
+    """Trainer-side mirror of
+    :func:`scripts.qwen3_decision_agent._format_candidates_for_selection`.
+
+    Renders ``_harness_adaptation_score`` (Refinement B) and the
+    ``_harness_deboost`` recent-veto rate (Refinement A) when those
+    fields are present on the candidate dict. Both fields are best-
+    effort and omitted silently when the harness path didn't decorate
+    the candidate. See ``harness/README.md`` §22.5 for the design.
+    """
     lines: List[str] = []
     for i, c in enumerate(candidates, 1):
         name = c.get("skill_name") or c.get("skill_id", f"strategy_{i}")
@@ -644,6 +539,12 @@ def _format_candidates_for_selection(candidates: List[Dict[str, Any]]) -> str:
         confidence = c.get("confidence")
         if confidence is not None:
             lines.append(f"     Confidence: {confidence:.2f}")
+        adapt = c.get("_harness_adaptation_score")
+        if isinstance(adapt, (int, float)):
+            lines.append(f"     Adaptation: {float(adapt):.2f}")
+        deboost = c.get("_harness_deboost")
+        if isinstance(deboost, (int, float)) and float(deboost) < 0.95:
+            lines.append(f"     Recent veto rate: {1.0 - float(deboost):.2f}")
     return "\n".join(lines)
 
 
@@ -756,6 +657,14 @@ def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
     return None
 
 
+_CRITICAL_ACTION_DRY_SPELL = 8
+"""Number of consecutive zero-reward decisions that haven't selected a
+known-critical action before the anti-repetition shim force-substitutes
+the critical action.  Tuned for gymv shooters where the natural episode
+length is ~20 frames (frame_skip=8) and 8 consecutive non-firing decisions
+≈ ~50% of an average episode without any scoring attempt."""
+
+
 def _apply_anti_repetition(
     action: str, valid_actions: List[str],
     recent_actions: List[str], recent_rewards: List[float],
@@ -765,10 +674,38 @@ def _apply_anti_repetition(
         return action
     tail = recent_actions[-MAX_REPEAT_ACTIONS:]
     tail_rewards = recent_rewards[-MAX_REPEAT_ACTIONS:]
+
+    critical = _critical_actions_for(game, valid_actions)
+
+    # Stuck on a single non-scoring action — break the loop, preferring
+    # a critical action over a random alternative.
     if all(a == action for a in tail) and sum(tail_rewards) <= 0:
         alternatives = [a for a in valid_actions if a != action]
-        if alternatives:
-            return random.choice(alternatives)
+        if not alternatives:
+            return action
+        critical_alt = next((c for c in critical if c != action), None)
+        if critical_alt is not None:
+            return critical_alt
+        return random.choice(alternatives)
+
+    # Critical-action dry spell: the policy is exploring varied actions
+    # but the env reward is zero AND no critical action has been picked
+    # in the recent window.  Force-substitute the first critical action
+    # so the learner at least observes the scoring action distribution.
+    # Only fires for shooter-class games (those with critical actions).
+    if (
+        critical
+        and len(recent_actions) >= _CRITICAL_ACTION_DRY_SPELL
+        and len(recent_rewards) >= _CRITICAL_ACTION_DRY_SPELL
+    ):
+        window_actions = recent_actions[-_CRITICAL_ACTION_DRY_SPELL:]
+        window_rewards = recent_rewards[-_CRITICAL_ACTION_DRY_SPELL:]
+        no_critical_used = not any(a in critical for a in window_actions)
+        no_reward = sum(r for r in window_rewards if r is not None) <= 0
+        # Only override if the proposed action itself is non-critical;
+        # never replace a critical action with a critical action.
+        if no_critical_used and no_reward and action not in critical:
+            return critical[0]
 
     return action
 
@@ -955,6 +892,22 @@ async def run_episode_async(
     step_sync: Any = None,
     opponent_model: Optional[str] = None,
     opponent_api_base: Optional[str] = None,
+    harness_hook: Any = None,
+    reward_logger: Any = None,
+    game_profile: Any = None,
+    # Block B4 — intention trigger ablation:
+    #   * "every-step"  (default): historical behaviour, intention LLM
+    #     fires every inner step.
+    #   * "sharp-shift": fires only when state delta or urgency
+    #     indicates a meaningful shift; otherwise the prev intention
+    #     is reused verbatim.
+    #   * "disabled":   fires only at step 0; subsequent steps reuse
+    #     the bootstrapped intention.
+    intention_trigger: str = "every-step",
+    # Block B5 — actor-side bank cap.  ``0`` (default) = no cap.
+    # When >0, the SkillQueryEngine.select() restricts the candidate
+    # pool to the top-K skills by relevance.
+    actor_bank_cap_k: int = 0,
 ) -> EpisodeResult:
     """Run one game episode asynchronously.
 
@@ -970,28 +923,53 @@ async def run_episode_async(
     model_name : str | None
         Model name for LLM opponent policy requests.
     assigned_role : str | None
-        Explicit role/power to control (unified-role mode).  When
-        *None* the legacy random-role selection is used.
+        Reserved for multi-role games (unused for current game set).
     assigned_role_index : int | None
-        Explicit player index (Avalon) or power ordinal (Diplomacy).
+        Reserved for multi-role games (unused for current game set).
     opponent_model : str | None
         External API model for opponents (e.g. ``"gpt-5-mini"``).
         When set, non-controlled players use this model via API
         instead of vLLM self-play.
     opponent_api_base : str | None
         Base URL for the opponent API (default: OpenRouter).
+    game_profile : ``trainer.coevolution._game_schema.GameProfile`` | None
+        Per-phase static GameProfile (Path 1).  When supplied, the
+        compact rendering (goal / win_signal / hazards / key_actions /
+        failure_modes) is prepended to ``SYSTEM_PROMPT`` and
+        ``SKILL_SELECTION_SYSTEM_PROMPT`` for every step of this
+        episode.  Adds ~150 tokens to each actor / skill-selection
+        prompt; no per-step LLM cost.  ``None`` (default) preserves
+        the legacy hard-coded prompt.
     """
     imp = _lazy_imports()
     GAME_CONFIGS = imp["GAME_CONFIGS"]
     make_gaming_env = imp["make_gaming_env"]
     make_orak_env = imp["make_orak_env"]
     GamingAgentNLWrapper = imp["GamingAgentNLWrapper"]
-    DiplomacyNLWrapper = imp["DiplomacyNLWrapper"]
-    AvalonNLWrapper = imp["AvalonNLWrapper"]
     HARD_SUMMARY_CHAR_LIMIT = imp["HARD_SUMMARY_CHAR_LIMIT"]
     extract_game_facts = imp["extract_game_facts"]
     compact_text_observation = imp["compact_text_observation"]
     strip_think_tags = imp["strip_think_tags"]
+
+    # Path 1 wiring.  Imported at function entry so a refactor of
+    # ``_state_to_markup`` / ``_game_schema`` cannot wedge episode
+    # collection at module-import time, and so the ``GameProfile``
+    # rendering is computed once per episode (not per step) for the
+    # actor-prompt prefix.
+    from trainer.coevolution._state_to_markup import state_to_markup
+    if game_profile is not None:
+        try:
+            from trainer.coevolution._game_schema import render_for_actor_prompt
+            _profile_prefix = render_for_actor_prompt(game_profile) + "\n\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "GameProfile render failed for game=%s: %s — "
+                "proceeding without profile prefix",
+                game, exc,
+            )
+            _profile_prefix = ""
+    else:
+        _profile_prefix = ""
 
     loop = asyncio.get_running_loop()
     t0 = time.monotonic()
@@ -1023,47 +1001,36 @@ async def run_episode_async(
         else:
             env = make_orak_env(game, max_steps=max_steps)
 
-    elif game == "diplomacy":
-        if DiplomacyNLWrapper is None:
-            raise ImportError("DiplomacyNLWrapper not available")
-        _ALL_POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
-        if assigned_role is not None:
-            power = assigned_role
+    elif game in GYMV_TEMPORAL_GAMES_SET:
+        # Gym-V Temporal/* (stable-retro Genesis).  Always go through
+        # SubprocessEnv: stable-retro's emulator is a process singleton
+        # ("Cannot create multiple emulator instances per process"), so
+        # in-process concurrent episodes drop 7/8 rollouts — see
+        # GYMV_SUBPROCESS_GAMES docstring above.  The worker calls
+        # ``make_gymv_temporal_env`` inside the child (frame_skip=8,
+        # max_steps from caller) so the obs_nl / info contract is
+        # preserved 1:1 with the in-process path.
+        SubprocessEnv = imp["SubprocessEnv"]
+        if game not in GYMV_SUBPROCESS_GAMES:
+            raise RuntimeError(
+                f"Gym-V Temporal/* env requested ({game!r}) but gym_v / "
+                "stable-retro / Mega Drive ROMs are not installed; run "
+                "install/install_gymv.sh + install/gymv_temporal_patch/"
+                "apply_patch.sh and retry."
+            )
+        logger.info(
+            "Using SubprocessEnv[gymv] for %s (emulator-singleton isolation)",
+            game,
+        )
+        if exe:
+            env = await loop.run_in_executor(
+                exe,
+                lambda: SubprocessEnv(
+                    game=game, max_steps=max_steps, env_kind="gymv",
+                ),
+            )
         else:
-            power = random.choice(_ALL_POWERS)
-        _role_idx = _ALL_POWERS.index(power) if power in _ALL_POWERS else 0
-        logger.info("Diplomacy: controlling %s this episode", power)
-        env = _DiplomacyAdapter(DiplomacyNLWrapper(
-            controlled_power=power, max_phases=20,
-            vllm_base_urls=vllm_base_urls, model_name=model_name,
-            skill_bank=skill_bank,
-            opponent_model=opponent_model,
-            opponent_api_base=opponent_api_base,
-        ))
-
-    elif game == "avalon":
-        if AvalonNLWrapper is None:
-            raise ImportError("AvalonNLWrapper not available")
-        _AVALON_ROLE_NAMES = ["Merlin", "Servant", "Servant", "Minion", "Assassin"]
-        _AVALON_SIDE_MAP = {
-            "Merlin": "good", "Percival": "good", "Servant": "good",
-            "Mordred": "evil", "Morgana": "evil", "Oberon": "evil",
-            "Minion": "evil", "Assassin": "evil",
-        }
-        if assigned_role_index is not None:
-            player = assigned_role_index
-        else:
-            player = random.randint(0, 4)
-        _role_name = _AVALON_ROLE_NAMES[player] if player < len(_AVALON_ROLE_NAMES) else "Servant"
-        _role_side = _AVALON_SIDE_MAP.get(_role_name, "good")
-        logger.info("Avalon: controlling player %d (%s/%s) this episode", player, _role_name, _role_side)
-        env = _AvalonAdapter(AvalonNLWrapper(
-            num_players=5, controlled_player=player,
-            vllm_base_urls=vllm_base_urls, model_name=model_name,
-            skill_bank=skill_bank,
-            opponent_model=opponent_model,
-            opponent_api_base=opponent_api_base,
-        ))
+            env = SubprocessEnv(game=game, max_steps=max_steps, env_kind="gymv")
 
     else:
         if exe:
@@ -1074,12 +1041,8 @@ async def run_episode_async(
             base_env = make_gaming_env(game=game, max_steps=max_steps)
 
         if game == "tetris":
-            try:
-                from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
-                env = TetrisMacroActionWrapper(GamingAgentNLWrapper(base_env))
-            except ImportError:
-                logger.warning("TetrisMacroActionWrapper unavailable, using primitive actions")
-                env = GamingAgentNLWrapper(base_env)
+            from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
+            env = TetrisMacroActionWrapper(GamingAgentNLWrapper(base_env))
         else:
             env = GamingAgentNLWrapper(base_env)
 
@@ -1087,14 +1050,6 @@ async def run_episode_async(
     _ep_role = ""
     _ep_side = ""
     _ep_role_idx = -1
-    if game == "diplomacy":
-        _ep_role = power
-        _ep_side = power          # each power is its own "side"
-        _ep_role_idx = _role_idx
-    elif game == "avalon":
-        _ep_role = _role_name
-        _ep_side = _role_side
-        _ep_role_idx = player
 
     if exe:
         obs_nl, info = await loop.run_in_executor(exe, env.reset)
@@ -1103,6 +1058,16 @@ async def run_episode_async(
 
     action_names = info.get("action_names", [])
     structured_state = info.get("structured_state")
+    # Path 1: emit the unified <state> markup so it's available to any
+    # downstream consumer (skill_selection, Crafter, Harness validator,
+    # eval scorers).  Same call site is used at every env.step below so
+    # train and eval see byte-identical schema for the same observation.
+    try:
+        info["state_markup"] = state_to_markup(
+            obs_nl=obs_nl, info=info, game=game, step=0,
+        )
+    except Exception as _markup_exc:  # noqa: BLE001
+        logger.debug("state_to_markup failed at reset: %s", _markup_exc)
     current_info = info
 
     bank_available = skill_bank is not None and (
@@ -1160,26 +1125,63 @@ async def run_episode_async(
             adapter="base", temperature=0.2, max_tokens=64,
         )
 
-        # Intention generation — base model, no LoRA, higher temp
-        intention_coro = _generate_intention(
-            vllm_client,
-            state_text=state_text,
-            game_name=game,
-            summary_state=summary_state,
-            prev_intention=prev_intention,
-            prev_summary_state=prev_summary_state,
-            delta=delta,
-            urgency=urgency,
-            skill_guidance=last_guidance,
-            last_action=recent_actions[-1] if recent_actions else "start",
-            tag_history=tag_history,
-        )
+        # Block B4 — intention trigger ablation.  When the trigger
+        # fires, we generate a fresh intention via the LLM; when it
+        # doesn't, we synthesise a coroutine that returns
+        # ``prev_intention`` so the downstream ``asyncio.gather`` shape
+        # stays unchanged.
+        def _should_regen_intention() -> bool:
+            if intention_trigger == "every-step":
+                return True
+            if intention_trigger == "disabled":
+                return step_count == 0 or not prev_intention
+            # "sharp-shift": fire on bootstrap, on detected urgency, or
+            # on a non-trivial state delta.  Heuristic chosen so the
+            # ablation matches the §4.1 definition without a separate
+            # 35B classifier.
+            if not prev_intention:
+                return True
+            if urgency:
+                return True
+            if delta and len(delta) >= 8:
+                return True
+            return False
+
+        if _should_regen_intention():
+            intention_coro = _generate_intention(
+                vllm_client,
+                state_text=state_text,
+                game_name=game,
+                summary_state=summary_state,
+                prev_intention=prev_intention,
+                prev_summary_state=prev_summary_state,
+                delta=delta,
+                urgency=urgency,
+                skill_guidance=last_guidance,
+                last_action=recent_actions[-1] if recent_actions else "start",
+                tag_history=tag_history,
+            )
+        else:
+            async def _passthrough_intention(_keep: str = prev_intention) -> str:
+                return _keep
+            intention_coro = _passthrough_intention()
 
         need_reselect = skill_tracker.should_reselect(
             last_guidance, state_text=summary_state or obs_nl,
         )
         skill_select_prompt: Optional[str] = None
         skill_coro = None
+
+        # T2.15: pre-bind `harness_filter_diag` at the per-step scope.
+        # Previously initialized only inside the `if bank_available …:`
+        # block below, but read unconditionally at the experience-dict
+        # assembly site (~L1384) — when the skill bank was empty (cold-
+        # start step 0) or sticky-guidance kept us out of the inner
+        # block, we hit `UnboundLocalError: harness_filter_diag`, which
+        # collapsed every rollout in the wave (8/8 episodes ERR with 0
+        # GRPO records).  Mirror the existing `harness_validate_diag`
+        # outer init below.
+        harness_filter_diag: Optional[Dict[str, Any]] = None
 
         if bank_available and (need_reselect or last_guidance is None):
             facts = extract_game_facts(obs_nl, game)
@@ -1193,7 +1195,37 @@ async def run_episode_async(
                 intention=current_intention,
                 structured_state=step_structured if step_structured else structured_state,
                 top_k=3,
+                bank_cap_k=int(actor_bank_cap_k or 0),
             )
+
+            # Pre-LLM harness eligibility filter (PLAN-HARNESS §5.2). When
+            # `harness_hook` is supplied, candidates the harness vetoes
+            # (status / domain / task / adapter / can_handle) are dropped
+            # *before* the skill_selection LLM sees them, and their veto
+            # reason is observed by the hook's RejectedSkillSink for the
+            # Crafter to consume in Phase B′. See
+            # `trainer/coevolution/_harness_hook.py` for the full
+            # contract.
+            if harness_hook is not None:
+                try:
+                    _hstate = harness_hook.state_for_step(
+                        game=game,
+                        summary_state=summary_state,
+                        intention=current_intention,
+                        inner_step=step_count,
+                        outer_step=step_count,
+                    )
+                    candidates, harness_filter_diag = harness_hook.filter_candidates(
+                        list(candidates), _hstate,
+                        episode_id=episode_id,
+                    )
+                except Exception as _hexc:                       # noqa: BLE001
+                    logger.debug(
+                        "harness_hook.filter_candidates failed at step=%d: %s — "
+                        "falling back to unfiltered candidates",
+                        step_count, _hexc,
+                    )
+                    harness_filter_diag = {"harness_error": repr(_hexc)}
 
             if candidates and len(candidates) >= 2:
                 candidates_text = _format_candidates_for_selection(candidates)
@@ -1203,7 +1235,11 @@ async def run_episode_async(
                     f"Available strategies (pick ONE by number):\n{candidates_text}\n\n"
                     f"Choose the best strategy. Output REASONING then SKILL number."
                 )
-                skill_select_prompt = SKILL_SELECTION_SYSTEM_PROMPT + "\n" + user_content
+                skill_select_prompt = (
+                    _profile_prefix
+                    + SKILL_SELECTION_SYSTEM_PROMPT
+                    + "\n" + user_content
+                )
                 skill_coro = vllm_client.generate_chat(
                     [{"role": "user", "content": skill_select_prompt}],
                     adapter="skill_selection",
@@ -1233,31 +1269,118 @@ async def run_episode_async(
         current_summary = f"{summary_state} | note={note}" if note else summary_state
         current_summary = current_summary[:HARD_SUMMARY_CHAR_LIMIT]
 
+        # Post-LLM harness validate_invocation (PLAN-UNIFIED §3.4).
+        # Wraps the LLM's chosen skill in a structured second-pass veto.
+        # When vetoed we walk to the next candidate; when no eligible
+        # candidate survives, we drop guidance and run unguided.
+        harness_validate_diag: Optional[Dict[str, Any]] = None
+
+        def _harness_validate(_idx: int) -> Tuple[bool, Optional[Dict[str, Any]]]:
+            """Validate `candidates[_idx]` via the harness.
+
+            Returns ``(ok, diag)``. ``ok=True`` when no harness hook is
+            configured or when validation admits.
+            """
+            if harness_hook is None:
+                return True, None
+            try:
+                _sid = (candidates[_idx] or {}).get("skill_id")
+                _hstate2 = harness_hook.state_for_step(
+                    game=game,
+                    summary_state=summary_state,
+                    intention=current_intention,
+                    inner_step=step_count,
+                    outer_step=step_count,
+                )
+                # Path 4 — pass ``episode_id`` for per-episode LLM
+                # validator caching (no-op when validator is off).
+                # ``inner_step`` is plumbed for block A2 logging only.
+                _ok, _d = harness_hook.validate_choice(
+                    _sid, _hstate2,
+                    episode_id=episode_id,
+                    inner_step=step_count,
+                )
+                return bool(_ok), _d
+            except Exception as _vexc:                          # noqa: BLE001
+                logger.debug(
+                    "harness_hook.validate_choice failed at step=%d "
+                    "idx=%d: %s — admitting",
+                    step_count, _idx, _vexc,
+                )
+                return True, {"status": "harness_error", "error": repr(_vexc)}
+
         # Process skill selection result
         if bank_available and (need_reselect or last_guidance is None):
             if sk_result is not None and candidates and len(candidates) >= 2:
                 chosen_idx, skill_reasoning = _parse_skill_selection(
                     sk_result.text, len(candidates), candidates,
                 )
-                guidance = candidates[chosen_idx]
-                if skill_reasoning:
-                    guidance["why_selected"] = skill_reasoning
-                last_candidates = candidates
-                last_chosen_idx = chosen_idx
-                last_skill_reasoning = skill_reasoning
-                skill_tracker.set_protocol(guidance.get("protocol"))
-                _chosen_sid = guidance.get("skill_id")
-                if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
-                    skill_bank.selection_tracker.increment(_chosen_sid)
+                # Walk through candidates starting at the LLM's pick; if
+                # the harness vetoes it, fall through to the next one.
+                _scan_order = [chosen_idx] + [
+                    i for i in range(len(candidates)) if i != chosen_idx
+                ]
+                _picked: Optional[int] = None
+                _last_v: Optional[Dict[str, Any]] = None
+                for _i in _scan_order:
+                    _ok, _d = _harness_validate(_i)
+                    if _ok:
+                        _picked = _i
+                        _last_v = _d
+                        if _i != chosen_idx:
+                            skill_reasoning = (
+                                f"{skill_reasoning or 'LLM-selected'} "
+                                f"(harness re-routed from idx={chosen_idx} "
+                                f"→ idx={_i})"
+                            )
+                        break
+                    _last_v = _d
+                harness_validate_diag = _last_v
+                if _picked is None:
+                    guidance = None
+                    last_candidates = candidates
+                    last_chosen_idx = chosen_idx
+                    last_skill_reasoning = "harness vetoed all candidates"
+                else:
+                    chosen_idx = _picked
+                    guidance = candidates[chosen_idx]
+                    if skill_reasoning:
+                        guidance["why_selected"] = skill_reasoning
+                    last_candidates = candidates
+                    last_chosen_idx = chosen_idx
+                    last_skill_reasoning = skill_reasoning
+                    skill_tracker.set_protocol(guidance.get("protocol"))
+                    _chosen_sid = guidance.get("skill_id")
+                    if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
+                        skill_bank.selection_tracker.increment(_chosen_sid)
             elif candidates:
-                guidance = candidates[0]
-                last_candidates = candidates
-                last_chosen_idx = 0
-                last_skill_reasoning = "only one candidate"
-                skill_tracker.set_protocol(guidance.get("protocol"))
-                _chosen_sid = guidance.get("skill_id")
-                if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
-                    skill_bank.selection_tracker.increment(_chosen_sid)
+                _picked2: Optional[int] = None
+                _last_v2: Optional[Dict[str, Any]] = None
+                for _i in range(len(candidates)):
+                    _ok, _d = _harness_validate(_i)
+                    if _ok:
+                        _picked2 = _i
+                        _last_v2 = _d
+                        break
+                    _last_v2 = _d
+                harness_validate_diag = _last_v2
+                if _picked2 is None:
+                    guidance = None
+                    last_candidates = candidates
+                    last_chosen_idx = 0
+                    last_skill_reasoning = "harness vetoed all candidates"
+                else:
+                    guidance = candidates[_picked2]
+                    last_candidates = candidates
+                    last_chosen_idx = _picked2
+                    last_skill_reasoning = (
+                        "only one candidate" if _picked2 == 0
+                        else f"harness re-routed to idx={_picked2}"
+                    )
+                    skill_tracker.set_protocol(guidance.get("protocol"))
+                    _chosen_sid = guidance.get("skill_id")
+                    if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
+                        skill_bank.selection_tracker.increment(_chosen_sid)
             else:
                 guidance = None
                 last_candidates = []
@@ -1304,14 +1427,27 @@ async def run_episode_async(
 
         imp_tags = imp["SUBGOAL_TAGS"]
         tags_str = "|".join(imp_tags)
+        # Surface critical actions (e.g. B = fire on shooter games) as
+        # a single-line in-context prior so the LLM doesn't have to
+        # rediscover the action vocabulary via GRPO alone.  Schema
+        # source: trainer.coevolution.config.GAME_CRITICAL_ACTIONS.
+        _critical_hint = ""
+        _critical_for_game = _critical_actions_for(game, step_actions)
+        if _critical_for_game:
+            _critical_hint = (
+                f"Critical actions for this game (use frequently when scoring): "
+                f"{', '.join(_critical_for_game)}.\n"
+            )
         action_user = (
             f"Game state:\n\n{summary_for_action}\n\n"
             f"Subgoal: {assigned_subgoal}\n"
-            f"{urgency_line}{skill_context}{recent_context}"
+            f"{urgency_line}{skill_context}{recent_context}{_critical_hint}"
             f"Available actions (pick ONE by number):\n{_format_numbered_actions(step_actions)}\n\n"
             f"Output ACTION number."
         )
-        action_prompt = SYSTEM_PROMPT + skill_text + "\n" + action_user
+        action_prompt = (
+            _profile_prefix + SYSTEM_PROMPT + skill_text + "\n" + action_user
+        )
 
         if step_sync is not None:
             await step_sync.arrive()
@@ -1327,6 +1463,50 @@ async def run_episode_async(
         )
         current_intention = parsed_intention or assigned_subgoal or prev_intention or f"[SETUP] {game}"
         action = _apply_anti_repetition(action, step_actions, recent_actions, recent_rewards, game=game)
+
+        # Block A4: stream the per-step intention update.  ``switched``
+        # = textual inequality;  ``sharp_shift`` = tag-prefix change OR
+        # high urgency (a working definition of §4.1's "sharp shift" we
+        # can sharpen post-hoc).  Drives intention-trigger ablation +
+        # the §4.1 method-section sharp-shift threshold definition.
+        try:
+            from trainer.coevolution._run_loggers import (  # noqa: WPS433
+                log_intention_switch,
+            )
+            _prev_tag_m = _TAG_RE.match(prev_intention) if prev_intention else None
+            _curr_tag_m = _TAG_RE.match(current_intention) if current_intention else None
+            _prev_tag = _prev_tag_m.group(1).upper() if _prev_tag_m else ""
+            _curr_tag = _curr_tag_m.group(1).upper() if _curr_tag_m else ""
+            _switched = bool(prev_intention) and (current_intention != prev_intention)
+            _sharp = (
+                bool(_prev_tag)
+                and bool(_curr_tag)
+                and _prev_tag != _curr_tag
+            ) or bool(urgency)
+            # Trainer outer step is best-effort: read from the harness
+            # hook when wired (orchestrator sets it via for_game).  When
+            # there is no hook (e.g. cold-start mode), emit step=-1 and
+            # post-hoc joiners can correlate via timestamp.
+            _outer = -1
+            if harness_hook is not None and hasattr(harness_hook, "_trainer_step"):
+                try:
+                    _outer = int(getattr(harness_hook, "_trainer_step", -1))
+                except Exception:
+                    _outer = -1
+            log_intention_switch(
+                step=_outer,
+                episode_id=episode_id,
+                game=game,
+                inner_step=step_count,
+                prev_intention=prev_intention,
+                new_intention=current_intention,
+                switched=_switched,
+                sharp_shift=_sharp,
+                summary_state_delta=delta or "",
+                urgency=urgency or "",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # ── 6. env.step() (in executor) ─────────────────────────
         try:
@@ -1345,6 +1525,16 @@ async def run_episode_async(
         total_reward += reward
         next_action_names = next_info.get("action_names", action_names)
         next_structured_state = next_info.get("structured_state")
+        try:
+            next_info["state_markup"] = state_to_markup(
+                obs_nl=next_obs_nl, info=next_info, game=game,
+                step=step_count + 1,
+            )
+        except Exception as _markup_exc:  # noqa: BLE001
+            logger.debug(
+                "state_to_markup failed at step %d: %s",
+                step_count + 1, _markup_exc,
+            )
 
         recent_actions.append(str(action))
         recent_rewards.append(float(reward))
@@ -1368,23 +1558,66 @@ async def run_episode_async(
             else:
                 action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
                 _action_reward = float(reward) + skill_tracker._intrinsic_bonus + 1.0
+                # Track shaping composition so the orchestrator's per-step
+                # flush surfaces the (intrinsic + const) / raw_env ratio
+                # that GRPO actually sees.  See run-loggers
+                # ``record_shaping_signal`` / ``flush_shaping_ratio`` for
+                # the warning threshold and the post-mortem rationale
+                # (TF3 phase-1 collapse: 83% zero-reward episodes meant
+                # the +1.0 survival constant dominated GRPO advantages).
+                try:
+                    from trainer.coevolution._run_loggers import (  # noqa: WPS433
+                        record_shaping_signal,
+                    )
+                    record_shaping_signal(
+                        game=game,
+                        raw_env=float(raw_env_reward),
+                        intrinsic=float(skill_tracker._intrinsic_bonus),
+                        constant_offset=1.0,
+                    )
+                except Exception:                                # pragma: no cover
+                    pass
+            _action_meta = {
+                "chosen_action": str(action),
+                "available_actions": list(step_actions),
+                "summary_state": summary_state,
+                "intention": current_intention,
+                "assigned_intention": assigned_subgoal,
+                "intention_source": "base_model",
+                "active_skill": skill_id,
+                "intrinsic_bonus": skill_tracker._intrinsic_bonus,
+                "raw_env_reward": raw_env_reward,
+                "placement_metrics": next_info.get("placement_metrics"),
+                "board_stats": next_info.get("board_stats"),
+            }
             grpo_records.append(GRPORecord(
                 adapter="action_taking", game=game, episode_id=episode_id, step=step_count,
                 prompt=action_prompt, completion=action_completion, reward=_action_reward,
-                metadata={
-                    "chosen_action": str(action),
-                    "available_actions": list(step_actions),
-                    "summary_state": summary_state,
-                    "intention": current_intention,
-                    "assigned_intention": assigned_subgoal,
-                    "intention_source": "base_model",
-                    "active_skill": skill_id,
-                    "intrinsic_bonus": skill_tracker._intrinsic_bonus,
-                    "raw_env_reward": raw_env_reward,
-                    "placement_metrics": next_info.get("placement_metrics"),
-                    "board_stats": next_info.get("board_stats"),
-                },
+                metadata=_action_meta,
             ))
+            # T2.4 single-sink: mirror the same scalar + metadata into
+            # ``RewardLogger`` so eval and training read from one source.
+            # Logger errors are non-fatal — we never let a logging hiccup
+            # break a rollout. Metadata is kept *minimal* (chosen_action +
+            # raw_env_reward) to avoid bloating the JSONL; full per-step
+            # metadata stays on the in-memory ``GRPORecord``.
+            if reward_logger is not None:
+                try:
+                    reward_logger.log_grpo_record(
+                        episode_id=episode_id,
+                        adapter="action_taking",
+                        step=step_count,
+                        reward=_action_reward,
+                        game=game,
+                        metadata={
+                            "chosen_action": _action_meta["chosen_action"],
+                            "raw_env_reward": _action_meta["raw_env_reward"],
+                            "active_skill": _action_meta["active_skill"],
+                            "intrinsic_bonus": _action_meta["intrinsic_bonus"],
+                        },
+                    )
+                except Exception:  # pragma: no cover  (defensive)
+                    logger.exception("reward_logger.log_grpo_record(action_taking) failed")
 
         if skill_select_prompt and last_candidates and len(last_candidates) >= 2:
             sk_completion = (
@@ -1409,21 +1642,39 @@ async def run_episode_async(
                 )
             else:
                 sk_reward = min(1.0, max(0.0, float(reward)))
+            _sk_meta = {
+                "chosen_idx": last_chosen_idx,
+                "skill_candidates": [c.get("skill_id") for c in last_candidates],
+                "chosen_skill_id": (
+                    last_candidates[last_chosen_idx].get("skill_id")
+                    if last_chosen_idx < len(last_candidates) else None
+                ),
+                "summary_state": summary_state,
+                "intention": current_intention,
+                "reselect_reason": skill_tracker._reselect_reason,
+            }
             grpo_records.append(GRPORecord(
                 adapter="skill_selection", game=game, episode_id=episode_id, step=step_count,
                 prompt=skill_select_prompt, completion=sk_completion, reward=sk_reward,
-                metadata={
-                    "chosen_idx": last_chosen_idx,
-                    "skill_candidates": [c.get("skill_id") for c in last_candidates],
-                    "chosen_skill_id": (
-                        last_candidates[last_chosen_idx].get("skill_id")
-                        if last_chosen_idx < len(last_candidates) else None
-                    ),
-                    "summary_state": summary_state,
-                    "intention": current_intention,
-                    "reselect_reason": skill_tracker._reselect_reason,
-                },
+                metadata=_sk_meta,
             ))
+            # T2.4 single-sink mirror — see the action_taking branch.
+            if reward_logger is not None:
+                try:
+                    reward_logger.log_grpo_record(
+                        episode_id=episode_id,
+                        adapter="skill_selection",
+                        step=step_count,
+                        reward=sk_reward,
+                        game=game,
+                        metadata={
+                            "chosen_skill_id": _sk_meta["chosen_skill_id"],
+                            "reselect_reason": _sk_meta["reselect_reason"],
+                            "n_candidates": len(_sk_meta["skill_candidates"]),
+                        },
+                    )
+                except Exception:  # pragma: no cover  (defensive)
+                    logger.exception("reward_logger.log_grpo_record(skill_selection) failed")
 
         _exp_dict: Dict[str, Any] = {
             "step": step_count,
@@ -1442,14 +1693,15 @@ async def run_episode_async(
         if _ep_role:
             _exp_dict["role"] = _ep_role
             _exp_dict["side"] = _ep_side
-            if game == "avalon":
-                _exp_dict["stage"] = _detect_avalon_stage(
-                    step_count, max_steps, next_info,
-                )
-            elif game == "diplomacy":
-                _exp_dict["stage"] = _detect_diplomacy_stage(
-                    step_count, max_steps, next_info,
-                )
+        # Harness diagnostics — surfaces eligibility filter / validate_invocation
+        # output for the Crafter hook (Phase B′) to drain into
+        # `SkillRecord.false_binding_patterns` via `RejectedSkillSink`.
+        # Empty dict when the harness wasn't enabled this step.
+        if harness_filter_diag is not None or harness_validate_diag is not None:
+            _exp_dict["harness"] = {
+                "filter": harness_filter_diag,
+                "validate": harness_validate_diag,
+            }
         experiences.append(_exp_dict)
 
         prev_summary_state = summary_state
@@ -1467,10 +1719,7 @@ async def run_episode_async(
             break
 
         # Early termination: stuck detection
-        # Skip for games with sparse rewards (reward only at game end).
-        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy"}
-        if (game not in _STUCK_EXEMPT_GAMES
-                and step_count >= min_steps_before_stuck
+        if (step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window
                 and sum(recent_rewards[-stuck_window:]) <= 0):
             logger.debug("Episode %s stuck at step %d, terminating early", episode_id, step_count)

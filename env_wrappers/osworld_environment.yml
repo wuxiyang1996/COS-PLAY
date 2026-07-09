@@ -1,0 +1,50 @@
+# Conda environment for OSWorld Gymnasium wrapper.
+#
+# Uses the existing 'osworld' conda env if available, or creates a new one.
+#
+# Create:   conda env create -f env_wrappers/osworld_environment.yml
+# Activate: conda activate osworld
+# Test:     pytest env_wrappers/tests/ -v
+#
+# Note: This installs the desktop-env package (OSWorld's core library).
+# A VM provider (VMware, Docker, or AWS) must be configured separately
+# to actually run tasks. See: https://github.com/xlang-ai/OSWorld
+
+name: osworld
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python>=3.10,<3.13
+  - pip
+
+  # Core scientific stack
+  - numpy>=1.26,<2
+  - pillow>=11.0
+
+  # Testing
+  - pytest>=7.0
+
+  - pip:
+    # OSWorld desktop environment (core library)
+    - desktop-env>=1.0.0
+
+    # Gymnasium (pinned to match OSWorld)
+    - gymnasium~=0.28.1
+
+    # Docker provider (optional, for containerized VMs)
+    - docker>=7.0
+
+    # Cloud providers (optional)
+    - boto3  # AWS
+    - azure-identity  # Azure
+    - azure-mgmt-compute
+
+    # OpenAI (for agent baselines)
+    - openai>=1.0
+
+    # Fabric (SSH to VM)
+    - fabric>=3.0

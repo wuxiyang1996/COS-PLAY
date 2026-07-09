@@ -28,7 +28,12 @@ bash scripts/run_sft_coldstart.sh
 
 ## Skill Bank Extraction (Step 2)
 
-Extracts skills from GPT-5.4 rollouts using Qwen3-8B.
+Extracts skills from SFT-teacher (`gpt-5.5`) rollouts using the
+project-wide skill-bank backbone (`Qwen/Qwen3.5-9B` —
+`BACKBONE_MODEL` in `common/models.py`).  The legacy entrypoint
+keeps its `qwen3_*` filename for back-compat; override the model
+via the `MODEL` env var if you want to run the deferred Qwen3-8B
+track instead.
 
 ```bash
 bash scripts/run_qwen3_skillbank_agent.sh

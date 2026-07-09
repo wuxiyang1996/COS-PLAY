@@ -23,7 +23,7 @@ Usage:
         episode,
         env_name="llm+avalon",
         config=ProposalConfig(merge_radius=5),
-        extractor_kwargs={"model": "gpt-4o-mini"},
+        extractor_kwargs={"model": "Qwen/Qwen3.5-9B"},
     )
 
     # Or fully general (no per-env rules needed)

@@ -19,7 +19,7 @@ Usage::
 
     stats = run_fsdp_grpo(
         gpu_ids=[4, 5, 6, 7],
-        model_name="Qwen/Qwen3-8B",
+        model_name="Qwen/Qwen3.5-9B",
         adapter_dir="runs/lora_adapters/decision/skill_selection",
         adapter_name="skill_selection",
         prompts=prompts,
@@ -601,7 +601,11 @@ def _train_one_adapter(
         StateDictType,
     )
     from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+    try:
+        from transformers import AutoModelForImageTextToText  # type: ignore
+    except ImportError:  # pragma: no cover — older transformers <5
+        AutoModelForImageTextToText = None  # type: ignore
 
     adapter_dir = job["adapter_dir"]
     adapter_name = job["adapter_name"]
@@ -619,13 +623,30 @@ def _train_one_adapter(
 
     t0 = time.time()
 
+    # T2.13 fix (2026-05-03): match the loader class to the live vLLM serve
+    # path so the LoRA delta we train is keyed against the same module tree
+    # vLLM will load it into.  Multimodal Qwen3.5 / Qwen3-VL exposes
+    # ``text_config`` + ``vision_config`` and its umbrella architecture is
+    # ``Qwen3_5ForConditionalGeneration``; ``AutoModelForCausalLM`` would
+    # silently return the LM-only sub-model and the LoRA keys would lack
+    # the ``language_model.`` prefix the production loader expects, causing
+    # a silent zero-init no-op at the SFT/GRPO → vLLM boundary.  See
+    # ``implementation_notes/pre-training-readiness-audit.md`` §0.3 T2.13.
+    _cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    _is_mm = hasattr(_cfg, "text_config") or hasattr(_cfg, "vision_config")
+    loader_cls = (
+        AutoModelForImageTextToText
+        if (_is_mm and AutoModelForImageTextToText is not None)
+        else AutoModelForCausalLM
+    )
+
     if is_main:
         logger.info(
-            "FSDP rank 0: loading %s (bf16) onto %d GPUs",
-            model_name, world_size,
+            "FSDP rank 0: loading %s (bf16, loader=%s) onto %d GPUs",
+            model_name, loader_cls.__name__, world_size,
         )
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model = loader_cls.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
         device_map={"": rank},
@@ -655,20 +676,30 @@ def _train_one_adapter(
         if is_main:
             logger.info("Loaded adapter '%s' from %s", adapter_name, adapter_path)
     else:
+        # T2.11 fix (2026-05-03): resolve target_modules through the single
+        # source of truth in ``trainer/SFT/lora_targets`` so the fresh-init
+        # fallback covers ALL Qwen3.5 hybrid legs (linear_attn.* + mlp.* +
+        # self_attn.*), not just the classic-6 dense subset.  Otherwise this
+        # branch — used by production paths that bypass ``prepare_adapters``
+        # — would silently re-introduce the T2.11 leg-coverage drift.
+        from trainer.SFT.lora_targets import resolve_target_modules as _resolve_targets
+        _text_arch = (
+            getattr(getattr(_cfg, "text_config", _cfg), "model_type", "") or ""
+        ).lower()
         lora_cfg = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=16,
             lora_alpha=32,
             lora_dropout=0.05,
-            target_modules=[
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj",
-            ],
+            target_modules=_resolve_targets(text_arch=_text_arch),
             inference_mode=False,
         )
         model = get_peft_model(model, lora_cfg, adapter_name=adapter_name)
         if is_main:
-            logger.info("Created fresh adapter '%s' (r=16, alpha=32)", adapter_name)
+            logger.info(
+                "Created fresh adapter '%s' (r=16, alpha=32, arch=%s, target_modules=%d legs)",
+                adapter_name, _text_arch or "unknown", len(lora_cfg.target_modules or []),
+            )
 
     for n, p in model.named_parameters():
         is_lora = "lora" in n.lower()
@@ -1177,7 +1208,11 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
         ShardingStrategy,
     )
     from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+    try:
+        from transformers import AutoModelForImageTextToText  # type: ignore
+    except ImportError:  # pragma: no cover — older transformers <5
+        AutoModelForImageTextToText = None  # type: ignore
 
     torch.cuda.set_device(rank)
     device = torch.device(f"cuda:{rank}")
@@ -1198,7 +1233,24 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
         # ── Phase 1: load model + FSDP wrap (done ONCE) ──────────────
         t_init = time.time()
 
-        model = AutoModelForCausalLM.from_pretrained(
+        # T2.13 fix (2026-05-03): mirror the vLLM serve path's loader class
+        # so the trained LoRA keys carry the ``language_model.`` prefix
+        # required by ``Qwen3_5ForConditionalGeneration``.  See the comment
+        # in ``_train_one_adapter`` and audit §0.3 T2.13.
+        _cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        _is_mm = hasattr(_cfg, "text_config") or hasattr(_cfg, "vision_config")
+        loader_cls = (
+            AutoModelForImageTextToText
+            if (_is_mm and AutoModelForImageTextToText is not None)
+            else AutoModelForCausalLM
+        )
+        if is_main:
+            logger.info(
+                "FSDP rank 0 (multi-adapter): loading %s (bf16, loader=%s) onto %d GPUs",
+                model_name, loader_cls.__name__, args["world_size"],
+            )
+
+        model = loader_cls.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
             device_map={"": rank},
@@ -1232,22 +1284,28 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
                     "Loaded adapter '%s' from %s", first_adapter, adapter_path,
                 )
         else:
+            # T2.11 fix (2026-05-03): use the single-source-of-truth
+            # target_modules resolver so the random-init fallback covers
+            # the full Qwen3.5 hybrid leg set.  See ``_train_one_adapter``.
+            from trainer.SFT.lora_targets import resolve_target_modules as _resolve_targets
+            _text_arch = (
+                getattr(getattr(_cfg, "text_config", _cfg), "model_type", "") or ""
+            ).lower()
             lora_cfg = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
                 r=16,
                 lora_alpha=32,
                 lora_dropout=0.05,
-                target_modules=[
-                    "q_proj", "k_proj", "v_proj", "o_proj",
-                    "gate_proj", "up_proj",
-                ],
+                target_modules=_resolve_targets(text_arch=_text_arch),
                 inference_mode=False,
             )
             model = get_peft_model(model, lora_cfg, adapter_name=first_adapter)
             if is_main:
                 logger.info(
-                    "Created fresh adapter '%s' (r=16, alpha=32)",
-                    first_adapter,
+                    "Created fresh adapter '%s' (r=16, alpha=32, arch=%s, "
+                    "target_modules=%d legs)",
+                    first_adapter, _text_arch or "unknown",
+                    len(lora_cfg.target_modules or []),
                 )
 
         for n, p in model.named_parameters():
@@ -1434,7 +1492,7 @@ def run_fsdp_grpo(
     gpu_ids : list[int]
         Physical GPU indices (e.g. ``[4, 5, 6, 7]``).
     model_name : str
-        HuggingFace model id (e.g. ``"Qwen/Qwen3-8B"``).
+        HuggingFace model id (e.g. ``"Qwen/Qwen3.5-9B"``).
     adapter_dir : str
         Directory containing the LoRA adapter (or where a fresh one
         will be created).

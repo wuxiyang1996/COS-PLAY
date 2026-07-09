@@ -77,7 +77,7 @@ class AsyncVLLMClient:
         self,
         base_url: str = "http://localhost:8000/v1",
         base_urls: Optional[List[str]] = None,
-        model: str = "Qwen/Qwen3-8B",
+        model: str = "Qwen/Qwen3.5-9B",
         default_temperature: float = 0.3,
         default_max_tokens: int = 512,
         timeout: float = 120.0,
@@ -116,6 +116,14 @@ class AsyncVLLMClient:
         self._call_count = 0
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
+
+        # Block A5: per-component (adapter) breakdown — one entry per
+        # adapter slug (or "base" / "model:<id>" for non-LoRA traffic).
+        # Each entry tracks call count, prompt/completion tokens, and
+        # cumulative latency.  ``snapshot_per_component()`` drains it
+        # into the per-step component_timings JSONL log.
+        self._per_component: Dict[str, Dict[str, float]] = {}
+        self._per_component_lock = asyncio.Lock()
 
         self._io_log_dir: Optional[str] = None
         self._io_step: int = 0
@@ -269,6 +277,12 @@ class AsyncVLLMClient:
         self._call_count += 1
         self._total_prompt_tokens += prompt_tokens
         self._total_completion_tokens += completion_tokens
+        self._record_component_call(
+            f"actor.{used_adapter}" if used_adapter else "actor.base",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=elapsed,
+        )
 
         await self._log_io({
             "ts": time.time(),
@@ -396,6 +410,12 @@ class AsyncVLLMClient:
         self._call_count += 1
         self._total_prompt_tokens += prompt_tokens
         self._total_completion_tokens += completion_tokens
+        self._record_component_call(
+            f"actor.{used_adapter}" if used_adapter else "actor.base",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=elapsed,
+        )
 
         await self._log_io({
             "ts": time.time(),
@@ -433,6 +453,46 @@ class AsyncVLLMClient:
         self._call_count = 0
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
+        self._per_component.clear()
+
+    def _record_component_call(
+        self,
+        component: str,
+        *,
+        prompt_tokens: int,
+        completion_tokens: int,
+        latency_ms: float,
+    ) -> None:
+        """Block A5: increment the per-component aggregate for one call.
+
+        Cheap (microsecond) book-keeping — runs on every chat/completion
+        request.  Drained per trainer step by ``snapshot_per_component``.
+        """
+        key = component or "base"
+        bucket = self._per_component.get(key)
+        if bucket is None:
+            bucket = {
+                "n_calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_ms": 0.0,
+            }
+            self._per_component[key] = bucket
+        bucket["n_calls"] += 1
+        bucket["prompt_tokens"] += int(prompt_tokens)
+        bucket["completion_tokens"] += int(completion_tokens)
+        bucket["total_ms"] += float(latency_ms)
+
+    def snapshot_per_component(self, *, reset: bool = True) -> Dict[str, Dict[str, float]]:
+        """Return the per-component aggregate dict and (optionally) reset.
+
+        Called once per trainer step by the orchestrator to emit
+        ``runtime_log/component_timings.jsonl`` rows.
+        """
+        snap = {k: dict(v) for k, v in self._per_component.items()}
+        if reset:
+            self._per_component.clear()
+        return snap
 
     async def health_check(self) -> bool:
         """Check if all vLLM instances are reachable."""

@@ -1,43 +1,97 @@
 # =============================================================================
-# Game-AI-Agent  —  Main environment (game-ai-agent)
-# Python 3.11 | CUDA 12.x
+# Multi-hop-Reasoning-VLM-Agent  —  Main environment (game-ai-agent)
+# Python 3.11 | torch 2.11.0+cu130 (pulled by vLLM 0.20) | CUDA 12.8+ / 13.x
+#
+# This file installs the unified training + inference + game-environment
+# stack. After install, the env contains:
+#   * GRPO + FSDP + LoRA training on Qwen3.5-9B
+#   * vLLM 0.20 inference server (Qwen3.5-9B + Qwen3.5-35B-A3B)
+#   * Skill bank pipeline + RAG (Qwen3-Embedding-0.6B)
+#   * Baselines (OpenAI, Anthropic, Google, Together, Z.AI, xAI)
+#   * GamingAgent / LMGame-Bench (2048, plain Tetris)
+#   * gym-v (179 visual envs incl. 13 Temporal/* Sega Genesis games)
+#   * Avalon (PYTHONPATH), Diplomacy
+#   * visual_reasoning_wrapper benchmark loaders (TIR-Bench, VisualToolBench,
+#     Video-Holmes, SIV-Bench) — heavy grounding heads (Florence-2 /
+#     GroundingDINO / OmniParser-v2 / EasyOCR) live in vlm_benchmarks env.
 #
 # Install:
 #   pip install -r install/requirements.txt
+# (install_main_env.sh runs this for you and also editable-installs
+# GamingAgent and gym-v.)
+#
+# Excluded / requires separate env:
+#   * Candy Crush — `tile_match_gym` pulls in `numba` which forces
+#     numpy<2 and breaks the Qwen3.5/vLLM stack. Use a SubprocessEnv
+#     or a dedicated env if you need it.
+#   * Super Mario — `nes-py` requires numpy<2 + gym==0.26.2.
+#     Install via install_orak_mario.sh (env: orak-mario).
+#   * BrowserGym (playwright==1.44 hard-pin) → env: browsergym.
+#   * OSWorld     (gymnasium~=0.28, transformers~=4.35) → env: osworld.
 # =============================================================================
 
 # ── Core ────────────────────────────────────────────────────────────────────
-numpy==1.26.4                   # pinned: GamingAgent requires <1.25 but works with 1.26
+# numpy is left unpinned: vLLM 0.20 / torch 2.11 / transformers 5.6 work with
+# both numpy 1.26 and 2.x, and gym-v / GamingAgent's 2048 + Tetris are happy
+# on numpy 2.x. (GamingAgent's setup.cfg pins numpy==1.24.4 nominally — that
+# warning is benign; do NOT downgrade or you will break torch 2.11.)
+numpy>=1.26
 pyyaml>=6.0
 
 # ── Deep Learning ───────────────────────────────────────────────────────────
-torch>=2.1                      # GRPO, FSDP, LoRA adapters
-transformers>=4.51.0            # Qwen3-8B backbone
-peft>=0.10                      # LoRA adapter loading / merging
+# torch is pulled in transitively by vllm (==2.11.0+cu130 for vllm 0.20.x) so
+# we do not pin it here; pinning would fight with vllm's exact-version pin.
+transformers>=5.6.0             # required for `qwen3_5` / `qwen3_5_moe` archs (Qwen3.5-9B, Qwen3.5-35B-A3B)
+peft>=0.17                      # LoRA adapter loading / merging on transformers 5.x
 safetensors>=0.4                # checkpoint save/load
-datasets>=2.0                   # SFT data loading (trainer/SFT)
-accelerate>=0.30                # FSDP / multi-GPU helpers
+datasets>=3.0                   # SFT data loading (trainer/SFT)
+accelerate>=1.0                 # FSDP / multi-GPU helpers compatible with torch 2.11
 
 # ── RAG ─────────────────────────────────────────────────────────────────────
-sentence-transformers>=2.7.0    # Qwen3-Embedding-0.6B text embedder
-Pillow>=9.0                     # multimodal embedder (qwen3_vl_embedding)
+sentence-transformers>=5.0      # Qwen3-Embedding-0.6B text embedder, transformers 5.x compatible
+Pillow>=9.0                     # multimodal embedder (qwen3_vl_embedding) + gym-v Observation.image
 
 # ── Inference server ────────────────────────────────────────────────────────
-vllm>=0.4                       # fast local inference during co-evolution
+vllm>=0.20.0                    # adds qwen3_5 / qwen3_5_moe model support; pulls torch==2.11.0+cu130
 httpx>=0.24                     # async vLLM client
 
-# ── API clients (baselines & cold-start) ────────────────────────────────────
+# ── API clients (baselines + GamingAgent runtime) ───────────────────────────
+# GamingAgent's tools/serving/api_providers.py imports ALL of these at module
+# load even if you only call one. Keeping them here means env_wrappers can
+# load `decision_agents.dummy_agent` without hitting ModuleNotFoundError.
 openai>=1.0                     # OpenRouter & OpenAI API calls
 anthropic>=0.30                 # Claude baselines
-google-genai>=1.0               # Gemini baselines
+google-genai>=1.0               # Gemini baselines (new SDK)
+google-generativeai>=0.8        # Gemini baselines (legacy SDK, used by GamingAgent)
+together>=2.0                   # Together AI baselines + GamingAgent
+zai-sdk>=0.2                    # Z.AI baselines (GLM family) — imported by GamingAgent
+xai-sdk>=1.0                    # xAI Grok baselines — imported by GamingAgent
+
+# ── gym-v + retro game environments ─────────────────────────────────────────
+# gym-v itself is editable-installed by install_main_env.sh from the cloned
+# repo (`pip install -e gym-v[games,spatial]`); the deps below are the ones
+# we want to pin or co-install at the env level.
+gymnasium>=1.2,<2.0             # gym-v core dep (also used by env_wrappers' Gymnasium adapters)
+stable-retro>=1.0               # Sega Genesis backend for Temporal/* (only useful after ROM import)
+pygame>=2.6                     # Tetris rendering inside GamingAgent
+pettingzoo>=1.25                # gym-v Games/* envs (multi-agent)
+textarena>=0.7                  # gym-v Games/TextArena/*
+minigrid>=2.5                   # gym-v Spatial/* envs
 
 # ── Configuration ───────────────────────────────────────────────────────────
 omegaconf>=2.3.0                # Orak wrappers, config files
 hydra-core>=1.3.0               # config composition
 
-# ── Game environments (external packages) ───────────────────────────────────
+# ── Other game environments ─────────────────────────────────────────────────
 diplomacy>=1.1.2                # Diplomacy game engine
 requests>=2.28                  # env_wrappers HTTP calls
+
+# ── Visual reasoning benchmark loaders ──────────────────────────────────────
+# visual_reasoning_wrapper.benchmarks.* (TIR-Bench, VisualToolBench,
+# Video-Holmes, SIV-Bench). HF-cache-mode loaders only need `datasets` +
+# `Pillow` (already above); video benches need a frame decoder.
+opencv-python-headless>=4.8     # provides `cv2`; headless variant avoids X11 deps in training/server envs
+decord>=0.6                     # fast random-access video reader (preferred by Video-Holmes / SIV-Bench)
 
 # ── Skill bank ──────────────────────────────────────────────────────────────
 scikit-learn>=1.0               # AgglomerativeClustering (skill_bank/new_pool)
@@ -54,3 +108,4 @@ pytest>=7.0                     # unit tests (tests/)
 # wandb                         # experiment tracking (trainer/coevolution)
 # lm_eval                       # academic benchmark evaluation (MMLU-Pro, Math-500)
 # qwen-vl-utils>=0.0.14         # multimodal RAG embedder (Qwen3-VL-Embedding-2B)
+# tile_match_gym                # Candy Crush — pulls numba → forces numpy<2; install in a separate env if you need it.

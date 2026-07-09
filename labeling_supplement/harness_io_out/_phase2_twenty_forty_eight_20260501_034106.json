@@ -1,0 +1,202 @@
+{
+  "game": "twenty_forty_eight",
+  "env_source": "gaming_agent",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/twenty_forty_eight/skill_bank.jsonl",
+  "n_skills": 3,
+  "n_success": 3,
+  "n_with_evaluable_effects": 1,
+  "n_all_predicates_passed": 0,
+  "n_trials_per_skill": 4,
+  "base_seed": 0,
+  "per_skill_trials": {
+    "COMMIT__MERGE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.3333333333333333,
+        "n_pass": 1,
+        "n_eval": 3
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 3
+      }
+    ],
+    "mid:OPTIMIZE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      }
+    ],
+    "COMPARE__MERGE": [
+      {
+        "trial": 0,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 1,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 2,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      },
+      {
+        "trial": 3,
+        "pass_rate": 0.0,
+        "n_pass": 0,
+        "n_eval": 0
+      }
+    ]
+  },
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__MERGE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 3,
+      "n_hops_pass": 1,
+      "pass_rate": 0.3333333333333333,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 3,
+        "n_hops_passed": 1,
+        "pass_rate": 0.3333333333333333,
+        "per_hop": [
+          {
+            "hop_index": 3,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 1,
+            "n_violated": 1,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": true,
+                "detail": "empty_cells attrs changed"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          },
+          {
+            "hop_index": 5,
+            "passed": false,
+            "n_required": 2,
+            "n_passed": 0,
+            "n_violated": 2,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": false,
+                "detail": "no shared label changed attributes"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": false,
+                "detail": "score 0.0 \u2192 0.0"
+              }
+            ]
+          },
+          {
+            "hop_index": 6,
+            "passed": true,
+            "n_required": 2,
+            "n_passed": 2,
+            "n_violated": 0,
+            "n_undecidable": 0,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": true,
+                "detail": "score attrs changed"
+              },
+              {
+                "type": "cumulative_reward_increased",
+                "args": {},
+                "passed": true,
+                "detail": "score 0.0 \u2192 4.0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "mid:OPTIMIZE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 0,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {}
+    },
+    {
+      "skill_id": "COMPARE__MERGE",
+      "skill_type": "reasoning",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 0,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {}
+    }
+  ],
+  "timestamp": "20260501_034106"
+}

@@ -222,8 +222,10 @@ class LLMSignalExtractor(SignalExtractorBase):
         The LLM call function.  Signature: ``ask_model_fn(prompt, **kwargs) -> str``.
         If None, imports ``ask_model`` from ``API_func`` at call time.
     model : str, optional
-        Model name passed to ask_model (e.g. "gpt-4o-mini", "gemini-2.5-flash").
-        Cheap/fast models are recommended since this is Stage 1.
+        Model name passed to ask_model (e.g. "Qwen/Qwen3.5-9B" for the
+        runtime skill-bank backbone, or "gpt-5.5-mini" / "gemini-2.5-flash"
+        for cheap GPT-side data generation). Cheap/fast models are
+        recommended since this is Stage 1.
     chunk_size : int
         Number of timesteps per LLM call (default 30).
     temperature : float

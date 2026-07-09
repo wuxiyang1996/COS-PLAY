@@ -73,6 +73,31 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
+# Corpora introduced by the dual-axis SFT pipeline (see
+# ``labeling/run_skill_discovery.sh`` and
+# ``labeling/build_decision_sft_jsonl.py``).  The new on-disk layout is
+# ``<root>/<corpus>/<game>/...`` whereas legacy data lives at
+# ``<root>/<game>/...`` directly.  ``_resolve_game_dir`` walks both.
+_CORPORA = ("gym_v", "env_wrappers")
+
+
+def _resolve_game_dir(root: Path, game: str) -> Optional[Path]:
+    """Return the per-game directory under *root* if it exists.
+
+    Tries ``<root>/<game>/`` first (legacy / flat layout) then walks the
+    corpus subdirs ``<root>/<corpus>/<game>/`` (current dual-axis layout).
+    Returns ``None`` when the game is missing from every layout.
+    """
+    direct = root / game
+    if direct.is_dir():
+        return direct
+    for corpus in _CORPORA:
+        cand = root / corpus / game
+        if cand.is_dir():
+            return cand
+    return None
+
+
 def _normalise_example(row: Dict[str, Any]) -> Dict[str, str]:
     """Extract a (prompt, completion) pair from a data row.
 
@@ -392,11 +417,19 @@ def load_decision_adapter_data(
     for game in games:
         bank: Dict[str, Dict[str, Any]] = {}
         if skillbank_data_dir:
-            bank = _load_skill_bank(Path(skillbank_data_dir) / game / "skill_bank.jsonl")
-            if bank:
-                logger.info("[%s] %s: loaded %d skills from bank", adapter_name, game, len(bank))
+            bank_dir = _resolve_game_dir(Path(skillbank_data_dir), game)
+            if bank_dir is not None:
+                bank = _load_skill_bank(bank_dir / "skill_bank.jsonl")
+                if bank:
+                    logger.info("[%s] %s: loaded %d skills from bank",
+                                adapter_name, game, len(bank))
 
-        path = base / game / f"{adapter_name}.jsonl"
+        gd = _resolve_game_dir(base, game)
+        if gd is None:
+            logger.warning("[%s] %s: no per-game dir under %s — skipping",
+                           adapter_name, game, base)
+            continue
+        path = gd / f"{adapter_name}.jsonl"
         rows = _read_jsonl(path)
         for row in rows:
             if adapter_name == "action_taking":
@@ -485,13 +518,20 @@ def load_segment_data(
     base = Path(data_dir)
     for game in games:
         descs: Dict[str, str] = {}
+        gd = _resolve_game_dir(base, game)
+        if gd is None:
+            logger.warning("[segment] %s: no per-game dir under %s — skipping",
+                           game, base)
+            continue
         if skillbank_data_dir:
-            bank = _load_skill_bank(Path(skillbank_data_dir) / game / "skill_bank.jsonl")
+            bank_dir = _resolve_game_dir(Path(skillbank_data_dir), game) or gd
+            bank = _load_skill_bank(bank_dir / "skill_bank.jsonl")
             if bank:
                 descs = _build_skill_descriptions(bank)
-                logger.info("[segment] %s: loaded %d skill descriptions", game, len(descs))
+                logger.info("[segment] %s: loaded %d skill descriptions",
+                            game, len(descs))
 
-        path = base / game / "teacher_io_coldstart.jsonl"
+        path = gd / "teacher_io_coldstart.jsonl"
         rows = _read_jsonl(path)
         for row in rows:
             ex = _normalise_example(row)
@@ -525,7 +565,12 @@ def load_coldstart_io_data(
     examples: List[Dict[str, str]] = []
     base = Path(data_dir)
     for game in games:
-        path = base / game / "coldstart_io_all.jsonl"
+        gd = _resolve_game_dir(base, game)
+        if gd is None:
+            logger.warning("[%s] %s: no per-game dir under %s — skipping",
+                           target_adapter, game, base)
+            continue
+        path = gd / "coldstart_io_all.jsonl"
         rows = _read_jsonl(path)
         n_matched = 0
         for row in rows:

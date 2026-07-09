@@ -1,6 +1,15 @@
 # Training Infrastructure
 
-Training module for the **COS-PLAY** co-evolution framework (Section 4.3). Implements the co-evolution loop between the Decision Agent and Skill Bank Agent using GRPO with FSDP for the decision agent and Hard-EM for the skill bank, training 5 LoRA adapters on a Qwen3-8B base model across 8×A100 GPUs.
+Training module for the **COS-PLAY** co-evolution framework (Section 4.3). Implements the co-evolution loop between the Decision Agent and Skill Bank Agent using GRPO with FSDP for the decision agent and Hard-EM for the skill bank, training 5 LoRA adapters on a **Qwen/Qwen3.5-9B** base model across 8×H200 GPUs.
+
+> **Model mapping (current phase).** Trained actor / skill-bank backbone =
+> `Qwen/Qwen3.5-9B` (this trainer's target).  Frozen control-plane backbone
+> (crafter / harness / orchestrator) AND in-loop LLM-as-judge =
+> `Qwen/Qwen3.5-35B-A3B` (same weights, two roles, served once).  SFT
+> cold-start data teacher = `gpt-5.5` (frontier).  See
+> [`../common/models.py`](../common/models.py) for the canonical constants
+> and `VLM_AGENT_BACKBONE_JUDGE_MODEL` for the override path back to a
+> gpt-5.5 off-distribution oracle when running formal eval.
 
 ## Quick Start — Co-Evolution Training
 
@@ -56,7 +65,7 @@ trainer/
 
 ## Co-Evolution Architecture
 
-Two agents share one Qwen3-8B base model served through a single vLLM instance with **5 LoRA adapters** loaded simultaneously:
+Two agents share one Qwen/Qwen3.5-9B base model served through a single vLLM instance with **5 LoRA adapters** loaded simultaneously:
 
 | Adapter | Agent | Purpose | GRPO reward signal |
 |---------|-------|---------|-------------------|
@@ -201,7 +210,7 @@ class CoEvolutionConfig:
     max_concurrent_episodes: int = 40
     total_steps: int = 30
     vllm_base_url: str = "http://localhost:8000/v1"
-    model_name: str = "Qwen/Qwen3-8B"
+    model_name: str = "Qwen/Qwen3.5-9B"
     temperature: float = 0.3
     max_tokens: int = 512
     grpo_enabled: bool = True

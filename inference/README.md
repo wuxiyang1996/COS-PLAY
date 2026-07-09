@@ -78,11 +78,17 @@ co-evolution checkpoint resolution, and metrics aggregation:
 
 ```bash
 bash inference/run_inference.sh \
-    --model Qwen/Qwen3-8B \
+    --model Qwen/Qwen3.5-9B \
     --bank path/to/bank.jsonl \
     --game tetris --game avalon \
     --episodes 10
 ```
+
+> The `--model` default tracks the project-wide actor backbone
+> (`BACKBONE_MODEL = "Qwen/Qwen3.5-9B"` in `common/models.py`).  Pass
+> `--model Qwen/Qwen3-8B` to drive the deferred Qwen3-8B inference
+> entrypoints (`inference/run_qwen3_8b_eval.{py,sh}`,
+> `inference/run_academic_benchmarks.py`).
 
 ## Academic Benchmarks (catastrophic forgetting)
 

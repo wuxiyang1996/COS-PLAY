@@ -175,8 +175,25 @@ def load_checkpoint(
     return metadata
 
 
+# Synthetic step number used by the orchestrator's best-reward
+# checkpoint alias (see ``orchestrator._BEST_CKPT_STEP``).  Excluded
+# from ``find_latest_checkpoint`` so a routine ``--resume`` doesn't
+# accidentally land on the best alias instead of the actual latest
+# training step (the alias is intentionally larger than any real step
+# count so it always wins ``max()``).  Callers that want the best
+# checkpoint must request it explicitly via ``--resume-from-step``.
+_BEST_CKPT_STEP_SENTINEL = 99999
+
+
 def find_latest_checkpoint(checkpoint_dir: str) -> Optional[int]:
-    """Find the latest checkpoint step number, or None if no checkpoints exist."""
+    """Find the latest checkpoint step number, or None if no checkpoints exist.
+
+    The synthetic ``step_99999`` "best-reward" alias is excluded — it
+    would otherwise always win ``max()`` and silently turn a
+    multi-phase ``--resume`` into a resume-from-best (which collapses
+    every subsequent phase into a no-op because the alias's step is
+    larger than the next phase's target).
+    """
     ckpt_dir = Path(checkpoint_dir)
     if not ckpt_dir.exists():
         return None
@@ -186,6 +203,8 @@ def find_latest_checkpoint(checkpoint_dir: str) -> Optional[int]:
         if d.is_dir() and d.name.startswith("step_"):
             try:
                 step = int(d.name.split("_")[1])
+                if step == _BEST_CKPT_STEP_SENTINEL:
+                    continue
                 meta = d / "metadata.json"
                 if meta.exists():
                     steps.append(step)

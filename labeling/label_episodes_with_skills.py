@@ -126,7 +126,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-MODEL_GPT54 = "gpt-5.4"
+try:
+    from common.models import BACKBONE_SFT_TEACHER_MODEL as _SFT_TEACHER_MODEL
+except Exception:  # pragma: no cover
+    _SFT_TEACHER_MODEL = "gpt-5.5"
+
+MODEL_GPT54 = _SFT_TEACHER_MODEL  # historical alias; new code: import the constant
 
 _OUTPUT_ROOT = CODEBASE_ROOT / "cold_start" / "output"
 DEFAULT_INPUT_DIRS: List[Path] = [

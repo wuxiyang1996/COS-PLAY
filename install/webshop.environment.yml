@@ -1,0 +1,40 @@
+# WebShop conda env — runs the princeton-nlp/WebShop Flask server only.
+#
+# Kept SEPARATE from `browsergym` and `game-ai-agent` because WebShop's
+# upstream pins are old (Flask 2.1, gym 0.24, NumPy 1.22, torch 1.11,
+# transformers 4.19) and conflict with our training/eval envs.  The
+# bridge in webshop_wrapper/server.py talks to this env over HTTP only.
+#
+# Heavy deps NOT installed by default (set WEBSHOP_LITE=0 in
+# install_webshop.sh to opt back in):
+#   - pyserini (Java 11 + Lucene)         — replaced by rank_bm25 fallback
+#   - faiss-cpu                           — only used by the BERT ranker
+#   - torch / transformers (heavyweight)  — only used by the BERT ranker
+#   - spacy + en_core_web_lg              — only used by goal generation;
+#                                            we use the human goal set
+#                                            shipped with the dataset
+#                                            (no NLP pipeline needed at
+#                                            serve time)
+name: webshop
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      # WebShop core (Flask + utilities)
+      - Flask>=2.1,<3.0
+      - rich>=12.0
+      - rank_bm25==0.2.2
+      - cleantext==1.1.4
+      - beautifulsoup4>=4.11
+      - thefuzz>=0.19
+      - python-Levenshtein  # speeds up thefuzz
+      - tqdm>=4.64
+      - pyyaml>=6.0
+      - requests>=2.27
+      - gdown>=4.7  # for dataset downloads
+      # Light NLP — spacy small model (~12 MB) is fine; goal pipeline only
+      # tokenises strings, doesn't need en_core_web_lg.
+      - spacy>=3.4,<3.8

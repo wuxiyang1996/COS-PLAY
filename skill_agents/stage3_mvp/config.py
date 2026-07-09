@@ -45,6 +45,6 @@ class Stage3MVPConfig:
     # Top-N worst segments to include in verification reports
     max_worst_segments: int = 10
 
-    # LLM model for contract summary generation (e.g. "Qwen/Qwen3-8B").
-    # Empty string = use ask_model default routing.
+    # LLM model for contract summary generation (e.g. "Qwen/Qwen3.5-9B").
+    # Empty string = use ask_model default routing (BACKBONE_MODEL).
     model: str = ""

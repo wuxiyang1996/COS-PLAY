@@ -1,0 +1,338 @@
+% =====================================================================
+%  NeurIPS appendix section: Benchmarks, splits, and runtime settings
+% =====================================================================
+%  Drop this file into the appendix of the main paper with, e.g.:
+%      \input{paper/appendix_benchmarks.tex}
+%  Requires: booktabs, multirow, array, siunitx (optional).
+% =====================================================================
+
+\section{Benchmarks, Data Splits, and Runtime Settings}
+\label{app:benchmarks}
+
+This appendix documents (i) the public benchmarks used in every domain,
+(ii) the exact pool/held-out sample counts we draw from each benchmark,
+(iii) the per-pipeline runtime knobs (episode caps, token budgets,
+parallelism), and (iv) the few-shot transfer protocol that consumes the
+held-out manifests at gate stage~3a. All ID lists are released alongside
+the code as deterministic stratified manifests
+(\texttt{cold\_start/evaluation\_dataset/}, seed $=0$) together with a
+\texttt{manifest.json} carrying SHA-256 hashes for every file, so that
+all numbers below are reproducible and tamper-evident.
+
+\subsection{Domain roles: source vs.\ transfer targets}
+\label{app:bench-roles}
+
+We split the five domains into one \emph{source} domain---games, in
+which skills are first discovered and stress-tested---and four
+\emph{transfer-target} domains, into which game-learned skills are
+adapted few-shot at gate stage~3a. The asymmetry is hard-coded in
+\texttt{common/enums.py}:
+\begin{itemize}
+  \item \textsc{Source}: \texttt{gymv} (13 retro Gym-Retro/Temporal
+        environments).
+  \item \textsc{Transfer target}: \texttt{browser}, \texttt{osworld},
+        \texttt{video}, \texttt{visual\_reasoning}.
+\end{itemize}
+Volume is therefore deliberately unbalanced: the source pool is sized
+for trajectory coverage, the target pools for \emph{stratified
+diversity} so that every candidate skill, when probed at stage~3a, can
+find $K\!\in\![5,16]$ relevant few-shot demonstrations in each target
+domain. We do \emph{not} sweep full benchmarks on the target side---the
+goal is transferability, not population accuracy.
+
+\subsection{Per-benchmark sample counts}
+\label{app:bench-sizes}
+
+Table~\ref{tab:bench-sizes} summarizes the seven public benchmarks we
+use across the four transfer-target domains, plus the in-house
+\texttt{gymv} suite on the source side. \emph{Pool} is the stratified
+slice we generate cold-start data on; \emph{held-out} is a disjoint
+slice frozen for the E0/E1/E2 evaluation scoreboards and never seen
+during training. Both halves are emitted in a single deterministic pass
+by the samplers in \texttt{cold\_start/task\_samples/} and
+\texttt{cold\_start/evaluation\_dataset/}; \mbox{$\text{pool}\cap
+\text{held-out}=\varnothing$} is asserted at build time.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Benchmark sample counts. ``Total'' is the upstream benchmark
+size; ``Pool'' / ``Held-out'' are the two disjoint stratified slices we
+release. \textbf{Update (2026-05-03):} VisualWebArena was dropped
+from the active suite after a one-week diagnostic uncovered ten
+distinct upstream/infra bugs (deprecated judge model, broken
+\texttt{WEB\_PATH} in the classifieds container, eager OpenAI
+import at module load, etc.) — the agent improvements that VWA
+debugging motivated stayed in (anti-thrash, anti-repeat, terminal
+actions, search-first hint), but the suite itself was archived to
+\texttt{legacy/visualwebarena/} for reproducibility. AssistantBench
++ WebArena now carry the web-task share. WebArena's gitlab+admin
+sites remain unreleased on cost grounds.}
+\label{tab:bench-sizes}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{@{}llrrrl@{}}
+\toprule
+\textbf{Domain} & \textbf{Benchmark} & \textbf{Total} & \textbf{Pool} & \textbf{Held-out} & \textbf{Modality} \\
+\midrule
+\multirow{1}{*}{\texttt{gymv} (source)}
+  & 13 retro envs (Airstriker, Columns, \ldots) & 13 envs        & $\sim$130 ep.        & ---  & rendered frame \\
+\midrule
+\multirow{4}{*}{\texttt{browser}}
+  & \st{VisualWebArena} (\emph{dropped 2026-05-03}; archived in \texttt{legacy/visualwebarena/}) & \st{910 tasks} & \st{200} & \st{50} & \st{screenshot $+$ AXTree} \\
+  & MiniWoB++ (atomic primitives)               & 125 tasks      & 125 (full)           & 25   & screenshot $+$ AXTree \\
+  & AssistantBench (open web)                   & 215 tasks      & 180                  & 30   & screenshot $+$ AXTree \\
+  & WebArena                                    & 812 tasks      & \emph{dropped}       & ---  & --- \\
+\midrule
+\texttt{osworld}
+  & OSWorld desktop tasks                       & 369 tasks      & 120                  & 30   & screenshot $+$ AT-SPI tree \\
+\midrule
+\multirow{2}{*}{\texttt{visual\_reasoning}}
+  & VisualToolBench (image, single-turn)        & 603 samples    & 300                  & 100  & image \\
+  & TIR-Bench (image, tool use)                 & 1{,}215 samples& 300                  & 100  & image \\
+\midrule
+\multirow{2}{*}{\texttt{video}}
+  & Video-Holmes (\emph{headline})              & 1{,}837 q.     & \textbf{1{,}000}     & 200  & 6 sampled frames \\
+  & SIV-Bench                                   & 8{,}728 q.     & 400                  & 100  & 6 sampled frames \\
+\midrule
+\textbf{Total}    &                              & ---            & \textbf{2{,}505 ids $+\sim\!130$ ep.} & \textbf{535 ids} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Stratification axis.}
+Each transfer-target slice is sampled by deterministic round-robin over
+a benchmark-specific axis, so the pool over-samples rare buckets
+relative to natural frequency---which is what we want for a few-shot
+transferability probe (Table~\ref{tab:bench-strata}). Every category
+that appears in the pool also appears in the held-out half, with a
+proportional within-bucket split so any bucket containing $\geq\!2$
+sampled items contributes to both halves.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Stratification axis and ID format per benchmark
+(seed $=0$, deterministic across machines).}
+\label{tab:bench-strata}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Benchmark} & \textbf{Stratification axis} & \textbf{ID format} \\
+\midrule
+OSWorld          & \texttt{snapshot} (11 normalized apps) $\times$ env-change tier  & task UUID \\
+VisualToolBench  & \texttt{prompt\_category} (9 STEM/business)                      & HF row id \\
+TIR-Bench        & \texttt{task} (13 tool-use families)                             & HF row id \\
+Video-Holmes     & \texttt{Question Type} (7 reasoning skills: CTI/IMC/MHR/PAR/SR/TA/TCI) & \texttt{\{video\_id\}.Q\{q\_id\}} \\
+SIV-Bench        & \texttt{category} (10 social-intel.\ dimensions)                 & \texttt{\{video\_id\}.Q\{tsv\_row\}} \\
+VisualWebArena   & site $\times$ template (sampler in \texttt{build\_browsergym\_diverse\_200.py}) & BrowserGym task name \\
+MiniWoB++        & full coverage (no sub-stratification)                            & BrowserGym task name \\
+AssistantBench   & question type $\times$ source domain                             & BrowserGym task name \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For OSWorld this means all 11 normalized snapshots
+(\texttt{base\_setup}, \texttt{chrome}, \texttt{gimp},
+\texttt{libreoffice\_calc}, \texttt{libreoffice\_impress},
+\texttt{libreoffice\_writer}, \texttt{multi\_apps}, \texttt{os},
+\texttt{thunderbird}, \texttt{vlc}, \texttt{vs\_code}) and all three
+\texttt{possibility\_of\_env\_change} tiers reach the eval slice; for
+Video-Holmes each of the 7 reasoning skills contributes
+$\sim\!142$--$144$ pool questions and $\sim\!27$--$29$ held-out
+questions; for SIV-Bench each of the 10 social-intelligence dimensions
+contributes exactly $40$ pool and $10$ held-out questions.
+
+\subsection{Per-pipeline runtime settings}
+\label{app:bench-runtime}
+
+Table~\ref{tab:bench-runtime} lists the actor-pipeline knobs used for
+cold-start trajectory generation and for E0 evaluation. Token budgets
+are calibrated for \texttt{gpt-5.x} reasoning models---which charge
+hidden thinking against the same \texttt{max\_completion\_tokens} cap
+as the visible response---so the ``schema cap'' column reports
+non-reasoning / reasoning budgets separately.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Per-pipeline runtime settings. ``Schema cap'' is split as
+non-reasoning / reasoning model budget; ``Action cap'' is the
+\texttt{max\_tokens} budget for the action-selection call. ``Parallelism
+unit'' is the recommended per-host concurrency for the cold-start
+runner; the practical bottlenecks are listed in
+Sec.~\ref{app:bench-parallelism}.}
+\label{tab:bench-runtime}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Pipeline} & \textbf{Ep./task} & \textbf{Max steps/ep.} & \textbf{Schema cap (n/r)} & \textbf{Action cap} & \textbf{Vision input} & \textbf{Parallelism unit} \\
+\midrule
+\texttt{gymv}             & 1                       & 60 (cap)                          & 4k / 12k & 128 & frame              & 1 proc.\ per env (13$\times$) \\
+BrowserGym                & 1                       & 30 (cold-start default)           & 4k / 12k & 400 & screenshot$+$AXTree & 4--8 headless Chromium \\
+OSWorld                   & 1                       & 50 (cap; 30 cold-start)           & 4k / 12k & 500 & screenshot$+$AT-SPI & 1--8 KVM guests \\
+Visual reasoning (img)    & 1 sample/call (no env)  & 1                                 & 4k / 12k & 350 & 1 image            & 16+ API workers \\
+Visual reasoning (video)  & 1 sample/call (no env)  & 1                                 & 4k / 12k & 350 & 6 sampled frames   & 16+ API workers \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Other invariants.}
+\begin{itemize}
+  \item \textbf{Headless by default} for BrowserGym (Xvfb-backed
+        Chromium) and OSWorld (KVM guest); pass \texttt{--no\_headless}
+        when debugging.
+  \item \textbf{Frames are not saved} by default; \texttt{--save\_frames}
+        persists every PNG fed to the VLM under
+        \texttt{<run>/<task>/frames/ep\_NNN/step\_NNN.png}.
+  \item \textbf{Reasoning-model detection} is regex-based
+        (\texttt{\_is\_reasoning\_model}); matches route to
+        \texttt{max\_completion\_tokens} automatically.
+  \item \textbf{Resume is on by default}: episodes that already have an
+        \texttt{episode\_NNN.json} on disk are skipped, which
+        guarantees byte-identical reruns.
+\end{itemize}
+
+\paragraph{\texttt{reasoning\_effort} policy.}
+The teacher's hidden-thinking budget is set per pipeline because the
+SFT student (\texttt{Qwen/Qwen3.5-9B}) only learns from the visible
+\texttt{<state>} block and action JSON---hidden tokens never reach the
+trained policy.
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Pipeline} & \texttt{reasoning\_effort} & \textbf{Rationale} \\
+\midrule
+\texttt{gymv} (source-domain trajectories) & \texttt{minimal} & structured extraction; student cannot use thinking \\
+BrowserGym / OSWorld trajectories          & \texttt{minimal} & schema $+$ constrained action; the schema \emph{is} the planning surface \\
+Visual reasoning MCQ (image $+$ video)     & \texttt{medium}  & teacher answer correctness is the bottleneck on multi-hop QA \\
+\bottomrule
+\end{tabular}
+\end{center}
+A paired smoke test ($n=5$ MiniWoB tasks) confirms this empirically:
+\texttt{minimal} hit $5/5$ vs.\ \texttt{medium}'s $4/5$, with
+$2.1\times$ lower wall-clock per step ($14.8$\,s vs.\ $31.5$\,s).
+
+\subsection{Backbone models}
+\label{app:bench-models}
+
+The single source of truth is \texttt{common/models.py}; the project
+ships a three-tier backbone stack with environment-variable overrides:
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Tier} & \textbf{Model} & \textbf{Used by} & \textbf{Trained?} \\
+\midrule
+Actor + Skill-Bank   & \texttt{Qwen/Qwen3.5-9B}        & \texttt{decision\_agents/}, \texttt{skill\_agents/}, \texttt{trainer/}   & LoRA (5 adapters) \\
+Control plane        & \texttt{Qwen/Qwen3.5-35B-A3B}   & \texttt{crafter/}, \texttt{harness/}, \texttt{orchestrator/}             & Frozen (vLLM) \\
+Validation / SFT     & \texttt{gpt-5.5}                & \texttt{cold\_start/}, \texttt{labeling/}, \texttt{JudgeConfig}          & External (no FT) \\
+\bottomrule
+\end{tabular}
+\end{center}
+The five LoRA adapters trained on the actor + skill-bank backbone are
+\texttt{skill\_selection}, \texttt{action\_taking}, \texttt{segment},
+\texttt{contract}, and \texttt{curator}.
+
+\subsection{Few-shot transfer protocol (gate stage~3a)}
+\label{app:bench-fewshot}
+
+Held-out items are consumed only by the few-shot adapter
+(\texttt{harness/few\_shot\_adapter.py}) at gate stage~3a, never during
+cold-start data generation. The adapter is stateless: given a
+\texttt{SkillRecord}, a target domain, and a sequence of
+\texttt{FewShotDemo}s, it (i) validates eligibility, (ii) coerces each
+demo's \texttt{state} into a target-domain \texttt{StateSchema},
+(iii)~runs the skill via \texttt{SkillHarness.run\_skill(\dots)}
+against the registered adapter, (iv) scores each shot, and (v) returns
+an \texttt{AdaptResult\{success\_rate, n\_success, n\_total, episodes,
+\dots\}}.
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Knob} & \textbf{Default} \\
+\midrule
+\texttt{k\_shot\_default} (per skill per target domain) & $5$  \\
+\texttt{k\_shot\_max}                                   & $16$ \\
+\texttt{transfer\_min\_target\_domains\_verified} (PASS) & $1$ \\
+Stage-3a verdict $\to$ \texttt{LIMITED\_PASS} threshold & $\geq 1$ verified target \\
+Stage-3a verdict $\to$ \texttt{FAIL} threshold          & $0$ verified targets \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Per-domain parallelism and end-to-end wall-clock}
+\label{app:bench-parallelism}
+
+Three of the four target-domain launchers are single-process loops;
+parallelism comes from one of three layered mechanisms
+(Table~\ref{tab:bench-parallel}). At the recommended per-bucket
+parallelism, end-to-end cold-start data generation completes in
+\textbf{$\sim$1.0--1.5\,h} (set by BrowserGym Chromium count, with
+OSWorld no longer the bottleneck after the 2026-05-03 pool cut from
+$250$ to $120$ tasks).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Per-domain parallelism primitives, recommended degree, and
+hard ceilings.}
+\label{tab:bench-parallel}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Domain}   & \textbf{Concurrency primitive}      & \textbf{Recommended} & \textbf{Hard ceiling} \\
+\midrule
+\texttt{gymv}     & one process per env (shell wrapper) & 13                   & 13 envs (retro emulator binds to process) \\
+BrowserGym        & shard wrapper (Chromium / shard)    & 8                    & RAM ($\sim$500\,MB / shard) $+$ self-host QPS \\
+OSWorld           & domain-level dispatch over KVMs     & 8                    & $\sim$6\,GB / guest; 8 on 64\,GB host, 10$+$ on $\geq\!96$\,GB \\
+Visual reasoning  & \texttt{ThreadPoolExecutor}         & 32                   & OpenAI tier RPM (16--32 on tier 4, 32--64 on tier 5) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cost ledger for one full cold-start pass}
+\label{app:bench-cost}
+
+GPT-5 reasoning-class pricing ($\$1.25$ / M input, $\$10$ / M output
+incl.\ thinking). The lean plan above costs $\sim$$\$200$ per full pass
+and dominates as follows: BrowserGym $\approx\!31\,\%$, OSWorld
+$\approx\!28\,\%$, visual reasoning $\approx\!22\,\%$,
+\texttt{gymv} $\approx\!18\,\%$. The two largest levers are
+(a) \texttt{reasoning\_effort} (\texttt{medium}$\!\to\!$\texttt{minimal}
+on env pipelines saves $\sim\!70\,\%$ of the bill) and (b) OSWorld KVM
+concurrency (2$\!\to\!$8 guests collapses wall-clock from
+$\sim\!6$\,h to $\sim\!0.8$\,h at the post-cut pool size).
+\textbf{Update (2026-05-03):} the OSWorld pool was reduced from $250$
+to $120$ stratified tasks (and the held-out from $50$ to $30$); all
+$11$ snapshot buckets remain represented in both halves. This drops
+the OSWorld cost share from $\approx\!45\,\%$ to $\approx\!28\,\%$
+and the per-pass total from $\approx\!\$260$ to $\approx\!\$200$,
+freeing budget for the WorkArena suite (browser-domain compositional
+tasks, queued for the next pass).
+
+\subsection{Reproducibility}
+\label{app:bench-repro}
+
+\begin{itemize}
+  \item \textbf{Sampler seed:} $0$, with per-benchmark sub-seeding so
+        that adding or removing one benchmark does not reshuffle the
+        others.
+  \item \textbf{Pool/held-out manifests:} checked in at
+        \texttt{cold\_start/evaluation\_dataset/\{pool,holdout\}/} as
+        plain text (one ID per line, comment header records
+        \texttt{count}, \texttt{seed}, per-axis distribution).
+  \item \textbf{Integrity:} \texttt{manifest.json} carries a SHA-256
+        per file; \texttt{load\_manifests.verify\_integrity()}
+        re-hashes every file at consumer start-up and fails loudly on
+        drift.
+  \item \textbf{Disjointness:} $\text{pool}\cap\text{held-out}=\varnothing$
+        is asserted at build time for every benchmark; the per-axis
+        bucket distribution is also written to
+        \texttt{\_axis\_distribution.json} as a checked-in diagnostic.
+  \item \textbf{Byte-stability:} re-running
+        \texttt{cold\_start/evaluation\_dataset/build\_pool\_and\_holdout.py}
+        on the same upstream dataset versions reproduces the same
+        bytes (verified at build time).
+\end{itemize}

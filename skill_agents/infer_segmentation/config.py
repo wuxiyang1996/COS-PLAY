@@ -136,7 +136,7 @@ class NewSkillConfig:
 class LLMTeacherConfig:
     """Settings for the LLM preference teacher (provides rankings, not scores)."""
 
-    model: Optional[str] = None  # None = use ask_model default (gpt-4o)
+    model: Optional[str] = None  # None = use ask_model default (Qwen/Qwen3.5-9B)
     temperature: float = 0.3
     max_tokens: int = 1000
     # Number of worker threads (None or 1 = sequential).

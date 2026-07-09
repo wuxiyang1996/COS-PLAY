@@ -116,7 +116,7 @@ def _get_curator_ask_fn() -> Optional[Callable[..., str]]:
     """
     from skill_agents._llm_compat import wrap_ask_for_reasoning_models
 
-    _hint = "Qwen/Qwen3-8B"
+    _hint = "Qwen/Qwen3.5-9B"
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()
@@ -286,6 +286,63 @@ def apply_curator_decisions(
 _grpo_original_fn: Optional[Callable] = None
 
 
+# T2.7 — curator overfit mitigation. The CURATOR LoRA is small + trained
+# on a tight objective (approve/veto/defer); under noisy early-GRPO
+# rewards it overfits before the actor has produced enough variety in
+# candidate proposals to give a useful signal. Mitigation: scale the
+# scalar reward seen by the GRPO wrapper by a linear ramp from 0 to
+# ``weight`` over ``warmup_steps`` outer-loop steps. Module-level state
+# is the simplest plumbing — the orchestrator calls
+# ``set_curator_warmup(...)`` once per outer step before
+# ``filter_candidates`` runs (the wrapper reads the state on every
+# scoring call). Defaults preserve the legacy "no scaling" behaviour.
+_curator_warmup_state: Dict[str, Any] = {
+    "weight": 1.0,
+    "warmup_steps": 0,
+    "current_step": 0,
+}
+
+
+def set_curator_warmup(
+    *,
+    weight: Optional[float] = None,
+    warmup_steps: Optional[int] = None,
+    current_step: Optional[int] = None,
+) -> None:
+    """T2.7: configure the per-step ramp on ``curator_reward``.
+
+    Any argument left as ``None`` keeps its previously-set value.
+    Call this from the trainer once per outer step before the
+    skill-bank pipeline fires (e.g. inside
+    ``PerGameSkillBankManager.reset_for_step``).
+    """
+
+    if weight is not None:
+        _curator_warmup_state["weight"] = float(weight)
+    if warmup_steps is not None:
+        _curator_warmup_state["warmup_steps"] = max(0, int(warmup_steps))
+    if current_step is not None:
+        _curator_warmup_state["current_step"] = max(0, int(current_step))
+
+
+def get_curator_warmup_state() -> Dict[str, Any]:
+    """Read-only snapshot of the current warmup state (for tests / logs)."""
+
+    return dict(_curator_warmup_state)
+
+
+def _curator_reward_weight() -> float:
+    """Resolve the current ramp multiplier in ``[0, weight]``."""
+
+    weight = float(_curator_warmup_state["weight"])
+    warmup = int(_curator_warmup_state["warmup_steps"])
+    if warmup <= 0:
+        return weight
+    step = int(_curator_warmup_state["current_step"])
+    ramp = min(1.0, max(0.0, step) / float(max(1, warmup)))
+    return weight * ramp
+
+
 def enable_curator_grpo(
     buffer: Any,
     group_size: int = 4,
@@ -296,6 +353,12 @@ def enable_curator_grpo(
     Reward context (compute_quality_fn, execute_fn) is read dynamically
     from the thread-local ``_reward_ctx`` at scoring time.  Call
     :func:`set_curator_reward_context` before maintenance runs.
+
+    T2.7: the scalar reward returned to the GRPO buffer is multiplied
+    by :func:`_curator_reward_weight` (a linear ramp configured via
+    :func:`set_curator_warmup`). The default state (``weight=1.0,
+    warmup_steps=0``) is a no-op identity scaling; configure the ramp
+    once at trainer start to enable overfit mitigation.
     """
     import skill_agents.bank_maintenance.llm_curator as _mod
     from skill_agents.grpo.rewards import curator_reward
@@ -316,11 +379,13 @@ def enable_curator_grpo(
             k: v for k, v in kwargs.items()
             if k not in ("action_outcomes",)
         }
-        return curator_reward(
+        base = curator_reward(
             decisions, *args,
             action_outcomes=ctx.get("action_outcomes"),
             **passthrough,
         )
+        # T2.7 — multiply by the live ramp weight; defaults to 1.0.
+        return float(base) * _curator_reward_weight()
 
     def _prompt_extractor(
         candidates: List[Dict[str, Any]],

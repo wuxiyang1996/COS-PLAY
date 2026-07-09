@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Extract skills from labeled GPT-5.4 rollouts and build a Skill Bank.
+# Extract skills from labeled SFT-teacher (gpt-5.5) rollouts and build a Skill Bank.
 #
 # Reads from:  labeling/output/gpt54/<game>/episode_*.json
 # Writes to:   labeling/output/gpt54_skillbank/<game>/

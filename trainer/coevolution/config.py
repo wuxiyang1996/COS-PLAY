@@ -7,74 +7,186 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 os.environ.setdefault("HF_HOME", "/workspace/huggingface")
 os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 
 
 SKILL_BANK_GAMES = [
-    "diplomacy",
-    "twenty_forty_eight",
-    "tetris",
-    "avalon",
-    "candy_crush",
-    "super_mario",
+    # Full 12-game registry — all P1 source + P2 hold-out games. Mirrors
+    # ``GAME_MAX_STEPS`` below so ``--games`` validation, the no-args
+    # default, and the curriculum scripts agree on the same universe.
+    #
+    # Phase split (training_notes/coevo-3phase-cross-game-ood-transfer-plan.md
+    # §4.1, refreshed 2026-05-03 PM) is enforced by the curriculum
+    # scripts' ``PHASES`` arrays, NOT by this constant — so:
+    #   * ``scripts/run_phase1_curriculum.sh`` uses the 6 P1 picks
+    #     below (4 healthy gymv + ``candy_crush`` + ``tetris``).
+    #   * ``scripts/run_phase2_holdout.sh`` uses the 6 hold-outs
+    #     (4 P2 gymv + ``twenty_forty_eight`` + ``super_mario``).
+    #
+    # ``python scripts/run_coevolution.py`` (no ``--games``) now defaults
+    # to all 12. For smoke tests against a single game, prefer an
+    # explicit ``--games tetris`` rather than relying on this default.
+    #
+    # ── Phase-1 source roster (§4.1) ──────────────────────────────
+    "tetris",                    # paper Table 3
+    "candy_crush",               # paper Table 3
+    "gymv_thunder_force_iii",    # gymv (data-driven pick)
+    "gymv_altered_beast",        # gymv (data-driven pick)
+    "gymv_columns",              # gymv (data-driven pick)
+    "gymv_dynamite_headdy",      # gymv (data-driven pick)
+    # ── Phase-2 hold-out roster (§7.1) ────────────────────────────
+    "twenty_forty_eight",        # paper Table 3
+    "super_mario",               # paper Table 3
+    "gymv_streets_of_rage_2",    # gymv (in-genre lift target)
+    "gymv_space_harrier_ii",     # gymv (scale-jump test)
+    "gymv_airstriker",           # gymv (easier in-genre sanity)
+    "gymv_strider",              # gymv (partial-signal rescue test)
 ]
+
+# Phase-1 source roster (§4.1) — used by curriculum scripts and
+# smoke-tests that want only the healthy training subset. Defined as a
+# tuple to discourage in-place mutation; convert to ``list(...)`` if you
+# need to pass it to ``CoEvolutionConfig.games``.
+PHASE1_DEFAULT_GAMES: tuple = (
+    "tetris",
+    "candy_crush",
+    "gymv_thunder_force_iii",
+    "gymv_altered_beast",
+    "gymv_columns",
+    "gymv_dynamite_headdy",
+)
+
+# Phase-2 hold-out roster (§7.1).
+PHASE2_HOLDOUT_GAMES: tuple = (
+    "twenty_forty_eight",
+    "super_mario",
+    "gymv_streets_of_rage_2",
+    "gymv_space_harrier_ii",
+    "gymv_airstriker",
+    "gymv_strider",
+)
 
 # Evaluation-only: rollouts collected for metrics but NOT fed into GRPO training.
 EVAL_ONLY_GAMES: List[str] = []
 
 GAME_MAX_STEPS: Dict[str, int] = {
-    "diplomacy": 20,
     "twenty_forty_eight": 200,
     "tetris": 200,
-    "avalon": 50,
     "candy_crush": 50,
     "super_mario": 500,
+    # Gym-V Temporal/* @ frame_skip=8.  200 agent steps ≈ 1600 emulator
+    # frames ≈ 27 s of in-game time at 60 Hz, which comfortably covers
+    # the ~100-step paper Table-3 anchor episodes for all 8 games while
+    # still bounding the worst case (long Streets-of-Rage 2 stages).
+    "gymv_thunder_force_iii": 200,
+    "gymv_altered_beast": 200,
+    "gymv_columns": 200,
+    "gymv_dynamite_headdy": 200,
+    "gymv_space_harrier_ii": 200,
+    "gymv_streets_of_rage_2": 200,
+    "gymv_airstriker": 200,
+    "gymv_strider": 200,
 }
 
 EMULATOR_GAMES: set = set()
+
+
+# ── Game-specific action priors (critical actions) ────────────────────
+# Maps game → ordered list of action names the policy *must* use to make
+# scoring progress.  These are surfaced in two places:
+#
+#   1. The action-selection prompt as a one-line hint, so the LLM sees
+#      the prior in-context (no shaping reward — keeps GRPO advantages
+#      from being further dominated by intrinsic).
+#   2. ``_apply_anti_repetition`` substitutes the first critical action
+#      that hasn't fired recently when the policy is stuck on a single
+#      non-scoring action — this is a hard-coded escape valve only,
+#      not a permanent reward signal.
+#
+# Why TF3 / Altered Beast etc. need this: post-mortem of the Phase-1
+# collapse showed the action_taking policy was choosing UP/RIGHT 30-46%
+# of the time but the B (fire/attack) button only ~3-7% of the time.
+# In Sega-style horizontal shooters and brawlers the only way to score
+# is sustained B presses; without an explicit prior the GRPO signal is
+# too weak (raw env reward zero on 83% of TF3 episodes) to teach the
+# model that B is the scoring action.  Adding a single-line schema hint
+# is a much cheaper fix than waiting 50+ steps for GRPO to converge to
+# the action vocab on its own.
+#
+# Action names match those exposed by the env's ``action_names`` list.
+# Names that don't appear in a given episode's available actions are
+# silently dropped at consumption time.  Keep the list short — only
+# truly indispensable actions (one or two per game).
+GAME_CRITICAL_ACTIONS: Dict[str, List[str]] = {
+    # Horizontal-scrolling shoot-em-ups: B = primary fire.
+    "gymv_thunder_force_iii":  ["B"],
+    "gymv_space_harrier_ii":   ["B"],
+    "gymv_airstriker":         ["B"],
+    # Side-scrolling brawlers / action: B = attack.
+    "gymv_altered_beast":      ["B"],
+    "gymv_streets_of_rage_2":  ["B"],
+    "gymv_strider":            ["B"],
+    # gymv_dynamite_headdy: head-throw is mapped to B in the gymv
+    # adapter; A is jump.
+    "gymv_dynamite_headdy":    ["B"],
+    # Falling-block puzzle: rotation matters but no single button is
+    # indispensable. Intentionally omitted.
+    # "gymv_columns": [],
+}
 
 # ── Multi-role rollout constants ─────────────────────────────────────
 # When ``unified_role_rollouts`` is enabled, the same decision agent
 # plays ALL roles and each rollout is tagged with role / side metadata.
 # Per-game episode overrides ensure sufficient role coverage.
 
-EPISODES_PER_GAME_MULTIROLE: Dict[str, int] = {
-    "avalon": 5,
-    "diplomacy": 7,
-}
+EPISODES_PER_GAME_MULTIROLE: Dict[str, int] = {}
 
-AVALON_ROLES: List[str] = ["Merlin", "Servant", "Servant", "Minion", "Assassin"]
-AVALON_SIDES: Dict[str, str] = {
-    "Merlin": "good", "Percival": "good", "Servant": "good",
-    "Mordred": "evil", "Morgana": "evil", "Oberon": "evil",
-    "Minion": "evil", "Assassin": "evil",
+
+# ── High-variance per-step episode overrides ─────────────────────────
+# Empirical analysis of run ``Qwen3.5-9B_20260504_144712`` showed
+# that the gymv shooter / brawler / scrolling-action subset is
+# bimodal (success rate ~17% on TF3, ~12% on Altered Beast) which
+# at the default n=8 episodes/step makes ``mean_reward`` jitter
+# between 0 and 60+ purely from sampling noise — the apparent
+# "collapse" at TF3 phase-1 steps 9-13 was almost entirely sampling
+# variance with one process restart on top.  A 16-episode batch is
+# the smallest n that drops the P(zero-mean | bimodal-success) noise
+# floor below ~5% (bootstrap from the empirical TF3 distribution
+# yields P=22.6% at n=8 and P=4.4% at n=16; see the run summary in
+# the chat thread for the bootstrap calculation).
+#
+# We deliberately don't override every game — Tetris / Candy Crush
+# are dense-reward and don't suffer the bimodal pathology; the
+# paper Table-3 anchor games stay on the global default to avoid
+# drifting away from the published numbers.  Adjust this dict (or
+# pass ``--episodes-per-game-overrides '{...}'`` from the launcher)
+# when adding new sparse-reward games.
+HIGH_VARIANCE_GYMV_EPISODES: Dict[str, int] = {
+    "gymv_thunder_force_iii":  16,
+    "gymv_altered_beast":      16,
+    "gymv_dynamite_headdy":    16,
+    "gymv_space_harrier_ii":   16,
+    "gymv_streets_of_rage_2":  16,
+    "gymv_strider":            16,
+    "gymv_airstriker":         16,
+    # gymv_columns is dense-scoring (every match scores) so the
+    # default 8 is enough — kept off the override list intentionally.
 }
-DIPLOMACY_POWERS: List[str] = [
-    "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
-]
 
 
 def resolve_bank_key(game: str, role: str = "", side: str = "") -> str:
     """Return the skill-bank routing key for an episode.
 
-    In unified-role mode the key encodes the role dimension so each
-    side (Avalon) or power (Diplomacy) gets its own bank.  For all
-    other games the key is just the game name.
+    In unified-role mode the key may encode a role dimension. For standard
+    games the key is just the game name.
 
     Examples::
 
-        resolve_bank_key("avalon", "Merlin", "good")   -> "avalon/good"
-        resolve_bank_key("avalon", "Assassin", "evil")  -> "avalon/evil"
-        resolve_bank_key("diplomacy", "FRANCE", "FRANCE") -> "diplomacy/FRANCE"
-        resolve_bank_key("tetris")                      -> "tetris"
+        resolve_bank_key("tetris") -> "tetris"
     """
-    if game == "avalon" and side:
-        return f"avalon/{side}"
-    if game == "diplomacy" and role:
-        return f"diplomacy/{role}"
     return game
 
 
@@ -83,18 +195,12 @@ def bank_keys_for_game(game: str) -> List[str]:
 
     Used by ``PerGameSkillBankManager`` to pre-create sub-bank pipelines.
     """
-    if game == "avalon":
-        return ["avalon/good", "avalon/evil"]
-    if game == "diplomacy":
-        return [f"diplomacy/{p}" for p in DIPLOMACY_POWERS]
     return [game]
 
 
 GAME_DURATION_ORDER = [
-    "diplomacy",
     "twenty_forty_eight",
     "tetris",
-    "avalon",
     "candy_crush",
     "super_mario",
 ]
@@ -113,13 +219,10 @@ ADAPTER_NAMES = [
 CURRICULUM_GRADUAL: Dict[int, List[str]] = {
     0: ["twenty_forty_eight", "tetris", "candy_crush"],
     10: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario"],
-    15: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario", "avalon"],
-    20: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario", "avalon", "diplomacy"],
 }
 
 CURRICULUM_FOCUSED: Dict[int, List[str]] = {
     0: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario"],
-    40: ["avalon", "diplomacy"],
 }
 
 CURRICULUM_PRESETS: Dict[str, Optional[Dict[int, List[str]]]] = {
@@ -132,7 +235,7 @@ CURRICULUM_PRESETS: Dict[str, Optional[Dict[int, List[str]]]] = {
 def _model_short_name(model_name: str) -> str:
     """Extract a filesystem-safe short name from a model identifier.
 
-    ``"Qwen/Qwen3-8B"`` → ``"Qwen3-8B"``
+    ``"Qwen/Qwen3.5-9B"`` → ``"Qwen3.5-9B"``
     ``"meta-llama/Llama-3-8B"`` → ``"Llama-3-8B"``
     """
     short = model_name.rsplit("/", 1)[-1]
@@ -142,7 +245,7 @@ def _model_short_name(model_name: str) -> str:
 def _generate_run_dir(model_name: str) -> str:
     """Generate a unique run directory name from model name + timestamp.
 
-    Example: ``runs/Qwen3-8B_20260315_143022``
+    Example: ``runs/Qwen3.5-9B_20260427_131800``
     """
     short = _model_short_name(model_name)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -159,17 +262,17 @@ class CoEvolutionConfig:
     eval_episodes_per_game: int = 3
 
     # ── Unified multi-role rollout mode ──────────────────────────
-    # When True, Avalon and Diplomacy use a single shared decision
-    # agent for all roles.  Rollouts are tagged with role / side /
-    # stage metadata so the skill bank can segment skills along
-    # those dimensions.  Episode counts follow per-game overrides
-    # (default: 5 for Avalon, 7 for Diplomacy).  Other games are
-    # unaffected.
-    # When False (default), the legacy random-role behaviour is used
-    # and ``episodes_per_game`` applies uniformly to every game.
+    # When True, per-game episode counts follow ``episodes_per_game_overrides``.
+    # When False (default), ``episodes_per_game_overrides`` ALSO applies
+    # so individual high-variance games can be bumped without scaling
+    # the global batch (bootstrapped from
+    # :data:`HIGH_VARIANCE_GYMV_EPISODES` by default).
     unified_role_rollouts: bool = False
     episodes_per_game_overrides: Dict[str, int] = field(
-        default_factory=lambda: dict(EPISODES_PER_GAME_MULTIROLE),
+        default_factory=lambda: {
+            **EPISODES_PER_GAME_MULTIROLE,
+            **HIGH_VARIANCE_GYMV_EPISODES,
+        },
     )
 
     max_concurrent_episodes: int = 64
@@ -186,28 +289,39 @@ class CoEvolutionConfig:
         default_factory=lambda: [4, 5, 6, 7],
     )
 
-    # vLLM inference
-    model_name: str = "Qwen/Qwen3-8B"
+    # vLLM inference — base model that GRPO trains and that vLLM serves.
+    # ``Qwen/Qwen3.5-9B`` is the multimodal hybrid Gated-DeltaNet + Gated-Attention
+    # text decoder we LoRA-tune on.  For text-only rollouts the vision tower
+    # is skipped via ``--language-model-only`` (see vllm_server.py).
+    model_name: str = "Qwen/Qwen3.5-9B"
     temperature: float = 0.5
     max_tokens: int = 512
     vllm_base_url: str = "http://localhost:8000/v1"  # used only when manage_vllm=False
     vllm_base_port: int = 8000
     vllm_gpu_util: float = 0.95
 
-    # Speculative decoding — use a small draft model to propose tokens
-    # that the main model verifies in parallel (~2-3x generation speedup).
-    speculative_model: Optional[str] = "Qwen/Qwen3-0.6B"
-    num_speculative_tokens: int = 5
+    # Speculative decoding.  Two methods are supported:
+    #   "mtp"          — use the model's built-in Multi-Token-Prediction head
+    #                    (Qwen3.5-9B / Qwen3.5-MoE / Qwen3-Next ship one).
+    #                    No draft model needed.  Recommended for Qwen3.5.
+    #   "draft_model"  — use a small external model (e.g. Qwen3-0.6B) as the
+    #                    drafter.  Required for plain Qwen3 (no MTP head).
+    speculative_method: str = "mtp"
+    speculative_model: Optional[str] = None
+    num_speculative_tokens: int = 1
+
+    # Inference-only secondary model (e.g. ``Qwen/Qwen3.5-35B-A3B``) — NOT
+    # trained, served separately for evaluation, baselines, or as a teacher.
+    # See ``inference/serve_qwen35_35b_a3b.sh`` for the standalone launcher;
+    # this field is purely informational so config snapshots record which
+    # inference model the run was paired with.
+    inference_only_model: Optional[str] = "Qwen/Qwen3.5-35B-A3B"
 
     # When True, the orchestrator manages vLLM server lifecycle
     # (persistent instances on vllm_gpu_ids, hot-reload after GRPO).
     manage_vllm: bool = True
 
-    # External opponent for multi-agent games (Avalon, Diplomacy).
-    # When set, non-controlled players/powers use this API model
-    # instead of self-play via the local vLLM model.  This breaks the
-    # symmetric-weakness problem where both sides share the same bugs.
-    # Example: "gpt-5-mini" (routed through OpenRouter).
+    # External opponent API (reserved for future multi-agent games).
     opponent_model: Optional[str] = None
     opponent_api_base: Optional[str] = "https://openrouter.ai/api/v1"
 
@@ -220,6 +334,377 @@ class CoEvolutionConfig:
     # Deprecated: kept for backward compat only.
     grpo_decision_devices: List[int] = field(default_factory=list)
     grpo_skillbank_devices: List[int] = field(default_factory=list)
+
+    # ── Crafter + Promotion online hooks (Phase 1, off by default) ─────
+    # Spec: implementation_notes/legacy/harness-usability-and-intra-gymv-transfer.md §3
+    # When enabled, after every co-evolution step's Phase B finalize() the
+    # trainer additionally runs:
+    #   1. ``trainer.coevolution._crafter_hook.run_crafter_step`` —
+    #      synthesizes FailureTraces from the just-finished EpisodeResults,
+    #      calls SkillCrafterService.reflect_on_episode, dumps proposals
+    #      in the offline-mirror JSONL schema.
+    #   2. ``trainer.coevolution._promotion_hook.run_promotion_step`` —
+    #      subprocess-invokes ``decide_promotion_gpt54.py --gate-mode
+    #      offline-synthetic`` over those proposals, then writes the
+    #      promoted (PROVISIONAL) skills back into each per-game
+    #      ``skill_bank.jsonl`` via ``skill_bank.legacy_writeback``.
+    # The hook is one-way (D8 Option A): the legacy 4-stage skill_agents
+    # pipeline keeps writing to per-game banks unchanged, the new path
+    # only *appends* promoted skills.
+    crafter_promotion_enabled: bool = False
+    # Per-batch Crafter cycle cadence. ``0`` disables cycle() entirely
+    # (per-episode reactive pass still runs).  Recommend 5-10 in steady
+    # state — runs Composer / Generalizer over accumulated failures.
+    crafter_cycle_every_k_steps: int = 0
+    # Total reward at/below this threshold counts as OUTCOME_FAILURE.
+    # ``0.0`` matches the offline mirror's default.
+    crafter_outcome_failure_threshold: float = 0.0
+    # Hard wall-clock cap on the decide_promotion subprocess invocation.
+    # Phase-0 Airstriker baseline is ~0.3s; 300s leaves room for the
+    # 13-game sweep + future Stage-1 replay overhead.
+    crafter_promotion_timeout_s: float = 300.0
+    # Gate mode forwarded to ``decide_promotion_gpt54.py --gate-mode``.
+    # ``offline-synthetic`` (default) keeps Phase-1's documented
+    # behaviour: rule-only Stage 0 + LIMITED_PASS placeholders for
+    # Stages 1-4, no LLM calls. ``offline-with-llm-judge`` extends it
+    # with one ``BACKBONE_JUDGE_MODEL`` (35B-A3B) call per proposal —
+    # the 35B verdict is appended as an extra StageVerdict and an LLM
+    # ``fail`` flips the aggregate to FAIL ⇒ REJECT, so visibly bad
+    # proposals are filtered out before they enter the bank. The
+    # 35B endpoint is selected via ``VLLM_BASE_URL_MAP`` (handled by
+    # ``API_func``); no extra plumbing required from the trainer side.
+    crafter_promotion_gate_mode: str = "offline-synthetic"
+    # Stage 2 cross-domain knobs for the LLM judge that runs inside
+    # ``offline-with-llm-judge`` mode (no effect for any other gate
+    # mode).  When ``crafter_promotion_judge_enable_thinking=True``
+    # the orchestrator forwards ``--enable-thinking`` to
+    # ``decide_promotion_gpt54.py``, which threads through to
+    # ``_llm_skill_judge.judge_proposal``'s ``ask_model`` call.  We
+    # also expose ``crafter_promotion_judge_max_tokens`` separately
+    # so callers can pair the flag with the budget the ``<think>``
+    # block actually needs.
+    #
+    # Live probes against Qwen3.5-35B-A3B (judge prompt ~620 input
+    # tokens) observed the model spend ~5K tokens on the ``<think>``
+    # block before emitting the ~120-char JSON verdict.
+    # ``max_tokens=4096`` truncates inside the think block;
+    # ``max_tokens=8192`` completes in ~25-40 s; ``max_tokens=16384``
+    # is comfortable headroom.  Stage-1 in-domain training keeps
+    # both at their fast-path defaults (thinking off, 256 tokens /
+    # verdict ⇒ no <think> block, ~0.2 s / call).
+    crafter_promotion_judge_enable_thinking: bool = False
+    crafter_promotion_judge_max_tokens: int = 256
+    # Lane-(a) feature flag. ``False`` (default) parks the Repairer /
+    # PatchProposal mint path: under
+    # ``implementation_notes/legacy/skill-lane-decision.md`` skills are
+    # retrieval payloads, not runnable programs, so live protocol-edit
+    # proposals would be edits to a contract no live runtime executes.
+    # The Crafter dispatcher's existing ``_STATUS_NO_OP`` →
+    # Hypothesizer fall-through carries the failure signal through.
+    # Set ``True`` only when running explicit lane-(b) experiments.
+    crafter_enable_protocol_patching: bool = False
+
+    # ── Cross-domain transfer gate (Layer A) ────────────────────────
+    # When ``True`` (and ``crafter_promotion_enabled=True``), the
+    # trainer inserts ``trainer.coevolution._transfer_hook.run_transfer_gate_step``
+    # after the promotion writeback. The gate re-evaluates each
+    # just-promoted skill's cross-domain admit rate against the
+    # configured ``crafter_transfer_targets`` and rolls back
+    # promotions that fall below ``crafter_transfer_admit_band[0]``
+    # on every target.
+    #
+    # The matrix subprocess is the same
+    # ``labeling_supplement/_phase4_transfer_matrix.py`` driver the
+    # Stage-6 measurement uses. Per-step gating only makes sense when
+    # ``crafter_promotion_enabled`` already runs at low cadence (e.g.
+    # every K steps); see
+    # ``implementation_notes/coevolution-cross-domain-integration.md``
+    # §4 for the full contract + acceptance criteria.
+    crafter_transfer_gate_enabled: bool = False
+    # Target corpora the matrix driver evaluates against. Subset of
+    # the canonical Stage-6 cluster set (video / visual_reasoning /
+    # osworld / browser). Empty list disables the gate at runtime
+    # without flipping the master flag.
+    crafter_transfer_targets: Tuple[str, ...] = ("video", "visual_reasoning")
+    # ``(lower, upper)`` admit-rate band per §11.5.4 of the cross-
+    # domain measurement plan. Skills failing ``admit_rate < lower``
+    # on every target are DEMOTED. ``upper`` is informational (Layer
+    # D dashboard surfaces it for the Generalizer's signal).
+    crafter_transfer_admit_band: Tuple[float, float] = (0.15, 0.60)
+    # Minimum number of targets a skill must clear ``band[0]`` on to
+    # KEEP. ``1`` is the most permissive: a single transferable
+    # target is enough to keep the promotion.
+    crafter_transfer_min_targets_in_band: int = 1
+    # Forwarded to ``_phase4_transfer_matrix.py --max-skills``. The
+    # synthetic bank-run is already filtered to just-promoted skills
+    # so this caps the per-cell sweep within that subset.
+    crafter_transfer_max_skills_per_cell: int = 5
+    # Hard wall-clock cap on the matrix subprocess. The driver loads
+    # 1-2 demos per cell; conda-env helpers (browser) cold-boot
+    # adds ~30s; 1800s is a generous ceiling for K=4 targets × N=5
+    # skills.
+    crafter_transfer_timeout_s: float = 1800.0
+
+    # ── Cross-domain dashboard (Layer D) ────────────────────────────
+    # Periodic offline pass that snapshots the trainer's banks and
+    # runs the full N×N Stage-6 transfer matrix to surface the live
+    # cross-domain transfer health (G1-G5 acceptance gates, per-
+    # cluster admit rates) to wandb / TensorBoard. Decoupled from
+    # the per-step transfer gate (Layer A) so dashboards can run at
+    # low frequency (every 100 steps) while the gate runs at
+    # higher frequency without doubling the subprocess load.
+    #
+    # Spec:  implementation_notes/coevolution-cross-domain-integration.md §5
+    crafter_dashboard_enabled: bool = False
+    # Cadence: dashboard fires when ``step % crafter_dashboard_every_k_steps == 0``.
+    # ``0`` disables the dashboard via cadence (master flag stays
+    # untouched). Recommend 100-500 in steady state — a full N×N
+    # sweep takes ~1-30 minutes depending on bank size + N targets.
+    crafter_dashboard_every_k_steps: int = 0
+    # Target corpora the dashboard's matrix sweep evaluates against.
+    # Typically the full canonical Stage-6 set so the wandb dashboard
+    # shows complete G3-G5 verdicts.
+    crafter_dashboard_targets: Tuple[str, ...] = (
+        "video", "visual_reasoning", "osworld", "browser",
+    )
+    # Forwarded to ``_phase4_transfer_matrix.py --max-skills``.
+    crafter_dashboard_max_skills_per_cell: int = 5
+    # Hard wall-clock cap on the matrix subprocess. Default 1h leaves
+    # room for the full N×N sweep with conda-env helpers (browser)
+    # cold-booting.
+    crafter_dashboard_timeout_s: float = 3600.0
+
+    # ── Harness wire-up (Day-10) ────────────────────────────────────
+    # When enabled, the trainer wires the harness's two LLM-free
+    # surfaces into Phase A rollouts:
+    #   1. ``SkillHarness.select_eligible_skills`` filters the cold-
+    #      start RAG candidates *before* the skill_selection LLM picks.
+    #   2. ``SkillHarness.validate_invocation`` second-pass-vetoes the
+    #      LLM's chosen skill, falling back to the next eligible one
+    #      when vetoed.
+    # The aggregated rejection patterns ride into Phase B′ via
+    # ``RejectedSkillSink → SkillLifecycleManager.record_false_binding_pattern``
+    # so the Crafter's Repairer sees richer evidence on each
+    # ``SkillRecord.false_binding_patterns`` (PLAN-SKILL-BANK §4.3b).
+    # See ``trainer/coevolution/_harness_hook.py`` for the full
+    # contract; ``harness/README.md`` §22 for the spec gap this closes.
+    harness_enabled: bool = False
+    # Whether SHADOW skills are admitted by the eligibility filter.
+    # Trainer default ``True`` mirrors ``HarnessConfig.allow_shadow``.
+    # Disable with ``--no-harness-allow-shadow`` for runs that must
+    # bind only fully-validated (ACTIVE / PROVISIONAL) skills.
+    harness_allow_shadow: bool = True
+
+    # ── Block B1 — harness ablation mode ──────────────────────────────
+    # Three-way switch for the §5.5 "w/o harness" ablation:
+    #   * ``"full"`` — eligibility filter + validate_invocation +
+    #     adaptation scoring fully active (default; same as
+    #     ``harness_enabled=True`` historically).
+    #   * ``"plain-text-skills"`` — skill candidates are still surfaced
+    #     to the actor (so few-shot prompt content matches the SkillBridge
+    #     run), but the eligibility filter and validate_invocation are
+    #     bypassed; the actor sees raw skill-bank content with no
+    #     grounding / precondition / admissibility check.  This is the
+    #     reviewer-requested "skills as plain-text few-shot" baseline.
+    #   * ``"off"`` — no skill candidates at all (cold-start mode).
+    # When ``harness_enabled=False`` this knob is ignored.
+    harness_mode: str = "full"
+
+    # ── Block B2 — w/o crafter ablation ───────────────────────────────
+    # When ``crafter_enabled=False``, the orchestrator skips
+    # ``run_crafter_step`` entirely (no patches, no LLM crafter, no
+    # hypotheses, no retire proposals).  Promotion + lifecycle still
+    # run on top of any pre-existing draft skills (so the bank can
+    # still grow from the legacy Stage-4 curator), but no new
+    # mutation evidence is produced.  This isolates the §4.3 crafter
+    # contribution from the §4.4 lifecycle.  Implies
+    # ``crafter_promotion_enabled=True`` (the cycler still runs in
+    # promotion mode).
+    crafter_enabled: bool = True
+
+    # ── Block B3 — promotion gate bypass ──────────────────────────────
+    # ``"gated"`` (default) routes proposals through
+    # ``GateService`` (offline-synthetic / offline-with-llm-judge / live).
+    # ``"permissive"`` auto-approves every proposal — DRAFT → ACTIVE
+    # straight through with no judge call.  Used to measure the
+    # §4.4 lifecycle gate contribution in isolation.
+    promotion_bypass_mode: str = "gated"
+
+    # ── Block B4 — intention trigger ablation ─────────────────────────
+    # Controls *when* a fresh ``intention`` LLM call happens inside the
+    # episode loop:
+    #   * ``"every-step"`` (default, matches historical SkillBridge
+    #     production behaviour pre-block-B): re-generate every inner
+    #     step.  Don't change the default without rerunning the full
+    #     §5.5 baseline.
+    #   * ``"sharp-shift"`` — re-generate only when the textual delta
+    #     or urgency signal indicates a meaningful state change.
+    #   * ``"disabled"`` — never re-generate; actor reuses the first
+    #     intention for the whole episode.
+    intention_trigger: str = "every-step"
+
+    # ── Block B5 — actor bank cap ─────────────────────────────────────
+    # Top-K cap applied at the actor's skill-query surface.  When
+    # ``actor_bank_cap_k > 0``, the actor sees only the top-K active
+    # skills (ranked by retrieval score).  ``0`` (default) disables
+    # the cap — historical behaviour, actor sees the full active bank.
+    # Used for the bank-size sweep K ∈ {10, 50, 200}.
+    actor_bank_cap_k: int = 0
+
+    # ── Path 2 — supplemental LLM Crafter (35B) ─────────────────────
+    # When enabled, ``_crafter_hook.run_crafter_step`` augments its
+    # rule-based proposals with up to ``llm_crafter_k_max`` additional
+    # 35B-A3B-driven proposals per game per step (one call per
+    # FailureTrace, parallelised via asyncio.gather, fail-soft on
+    # any error).  Routes through ``API_func.ask_model`` →
+    # ``BACKBONE_JUDGE_MODEL`` (or ``llm_crafter_model`` if non-empty)
+    # via ``VLLM_BASE_URL_MAP`` — same plumbing as the LLM promotion
+    # judge.  See ``trainer/coevolution/_llm_crafter.py`` and
+    # ``crafter-harness-orchestrator-roles.md`` §2.1.
+    llm_crafter_enabled: bool = False
+    # Empty → defer to ``BACKBONE_JUDGE_MODEL`` (35B-A3B teacher).
+    llm_crafter_model: str = ""
+    # Hard cap on parallel 35B calls per game per step. Lowered from 5
+    # → 2 in the post-v11 fix (see ``crafter_hypothesize_*`` block
+    # above): with the rewritten last-resort prompt and the recurrence
+    # / relatedness gates, a small per-step volume cap is safe and
+    # keeps token budget predictable.  Override via
+    # ``--llm-crafter-k-max`` (env: ``LLM_CRAFTER_K_MAX``).
+    llm_crafter_k_max: int = 2
+    # Token budget per LLM Crafter response.
+    llm_crafter_max_tokens: int = 1024
+    # Sampling temperature for LLM Crafter calls.
+    llm_crafter_temperature: float = 0.3
+    # Hard wall-time per individual 35B call.  On timeout we drop the
+    # one trace and continue; a slow 35B can never block a step.
+    llm_crafter_timeout_s: float = 60.0
+    # Stage 2 (cross-domain adaptation) opt-in.  When ``True``, the
+    # 35B Crafter calls in ``_crafter_hook`` forward
+    # ``enable_thinking=True`` into ``API_func.ask_vllm`` so Qwen3-A3B
+    # emits its ``<think>`` chain-of-thought before the final JSON
+    # proposal.  In Stage 1 (in-domain curriculum, all 6 phases of
+    # ``run_phase1_curriculum.sh``) this stays ``False`` because the
+    # rule-based proposals already cover the easy patches and the
+    # extra wall-time would dominate per-step latency.
+    #
+    # EXPERIMENTAL: live probes against Qwen3.5-35B-A3B observed the
+    # Crafter prompt induce >16K-token ``<think>`` blocks that never
+    # emitted a final JSON answer (the prompt's open-ended
+    # patch / hypothesize / retire dispatch invites runaway
+    # reasoning).  Stage-2 callers that flip this to ``True`` SHOULD
+    # therefore (a) bump ``llm_crafter_max_tokens`` to ≥ 16384,
+    # (b) bump ``llm_crafter_timeout_s`` to ≥ 180, AND (c) re-tune
+    # ``_llm_crafter._build_prompt`` to constrain reasoning length
+    # ("think briefly", explicit JSON-first instruction, etc.)
+    # before relying on the path.
+    llm_crafter_enable_thinking: bool = False
+
+    # ── Hypothesizer fallthrough gate (post-v11 audit) ──────────────
+    # The crafter dispatch chain is `patch → retire → hypothesize`,
+    # with hypothesize as last-resort.  In v11 the trigger conditions
+    # were too loose: a single orphan failure (skill_id missing) fell
+    # straight through to the Hypothesizer, which minted an empty
+    # placeholder skill on every episode.  Result: 73-85% of the bank
+    # was boilerplate ``hypothesis__prop-...`` records that the actor
+    # never selected, contract GRPO collapsed (effect-literal learning
+    # rate fell from 70-85% → 6%), and TF3 step-0 reward dropped from
+    # 688 (5/3 baseline) to 62.
+    #
+    # Two gates restore the architectural intent that hypothesize fires
+    # only on genuinely hard cases:
+    #
+    #   * ``crafter_hypothesize_min_recurrences`` — same failure
+    #     pattern must recur ≥ N times in the FailureMemory window.
+    #     Default 3 mirrors the per-batch ``hot_pattern_threshold``,
+    #     so per-episode and per-batch dispatch share a recurrence
+    #     bar for the *new-skill* exit.  Set to 1 to reproduce v11
+    #     behaviour (test-only knob).
+    #   * ``crafter_hypothesize_related_skill_jaccard`` — minimum
+    #     token-Jaccard overlap (skill_id + name + strategic_description
+    #     vs failure pattern signature + diagnosis + abort_reason)
+    #     above which the gate decides "a related skill already
+    #     exists, prefer patch".  Default 0.30 — the same threshold
+    #     ``skill_agents.query._compute_relevance`` uses for
+    #     retrieval relevance, so the gate's notion of "related"
+    #     matches the actor's downstream selection signal.  Set
+    #     to 0.0 to disable the relatedness gate (recurrence gate
+    #     stays).
+    crafter_hypothesize_min_recurrences: int = 3
+    crafter_hypothesize_related_skill_jaccard: float = 0.30
+
+    # ── Reviewer-facing instrumentation (block A) ─────────────────────
+    # Enable per-event JSONL streams used by the §4.3 / §5.3 / §5.5
+    # analysis scripts:
+    #   * ``run_dir/harness_log/rejections.jsonl`` — every veto code +
+    #     domain + skill_id (drives failure-mode pie chart).
+    #   * ``run_dir/harness_log/validate.jsonl`` — every per-event
+    #     ``validate_invocation`` diagnostic (drives case studies).
+    #   * ``run_dir/lifecycle_log/transitions.jsonl`` — every
+    #     ``SkillStatus`` transition (drives lifetime distribution +
+    #     promotion/deprecation curves).
+    #   * ``run_dir/intention_log/switches.jsonl`` — every per-step
+    #     intention update (drives intention-trigger ablation).
+    #   * ``run_dir/runtime_log/component_timings.jsonl`` — per-component
+    #     vLLM call counts + latency (drives runtime overhead Q8).
+    # I/O cost is ~1MB/step for a 6-game phase; disable for
+    # latency-sensitive ablation runs.
+    reviewer_instrumentation_enabled: bool = True
+
+    # ── Path 4 — LLM Harness validator (35B) ────────────────────────
+    # Post-LLM second-pass validation by the 35B-A3B teacher,
+    # complementing the deterministic
+    # :meth:`SkillHarness.validate_invocation`.  Hybrid policy:
+    #   * Bootstrap window: when ``trainer_step <
+    #     llm_harness_bootstrap_steps`` the LLM validator fires on
+    #     EVERY admitted skill.
+    #   * Steady state: only fires when the deterministic verdict
+    #     was uncertain (e.g. SHADOW skill, no can_handle evidence,
+    #     translation-rewritten contract).
+    # Verdicts can ONE-WAY downgrade admit→veto; they never
+    # override a deterministic veto upward.  Episode-level cache
+    # keyed by ``(episode_id, skill_id)`` so repeated picks of the
+    # same skill in one episode pay the LLM cost only once.  See
+    # ``trainer/coevolution/_llm_harness_validator.py``.
+    llm_harness_validator_enabled: bool = False
+    # Empty → defer to ``BACKBONE_JUDGE_MODEL`` (35B-A3B teacher).
+    llm_harness_model: str = ""
+    # Bootstrap window: outer-loop training steps below this value
+    # always go through the LLM validator regardless of deterministic
+    # certainty.  Default 20 ≈ ~1 day of P1 training.
+    llm_harness_bootstrap_steps: int = 20
+    # Token budget per LLM Harness validator response.
+    llm_harness_max_tokens: int = 256
+    # Sampling temperature for LLM Harness validator calls.
+    llm_harness_temperature: float = 0.2
+    # Hard wall-time per individual 35B call.  On timeout the
+    # deterministic verdict stands (admit).
+    llm_harness_timeout_s: float = 30.0
+
+    # ── Phase-start GameProfile (Path 1) ────────────────────────────
+    # When ``True``, the orchestrator runs ``ensure_game_schemas`` once
+    # per curriculum phase boundary (and at startup) and injects a
+    # compact GameProfile (goal / win_signal / hazards / key_actions /
+    # failure_modes) into the actor's SYSTEM_PROMPT and
+    # SKILL_SELECTION_SYSTEM_PROMPT for the duration of the phase.
+    # Adds 1 × ``BACKBONE_JUDGE_MODEL`` (35B-A3B) call per game per
+    # phase boundary, no per-step LLM cost. The same call also produces
+    # a ``<state>...</state>`` exemplar cached under
+    # ``run_dir/phase_artifacts/<game>.schema.json`` for Path 2 (LLM
+    # Crafter) and Path 4 (LLM Harness validator) to reuse as a
+    # few-shot anchor without firing their own 35B calls.
+    # See ``trainer/coevolution/_game_schema.py``.
+    game_schema_enabled: bool = False
+    # Override model for GameProfile generation; empty string defers to
+    # ``BACKBONE_JUDGE_MODEL`` resolved by ``API_func.ask_model`` via
+    # ``VLLM_BASE_URL_MAP`` (same routing as the LLM promotion judge).
+    game_schema_model: str = ""
+    # Token budget for the 35B response (compact GAME_PROFILE block +
+    # full STATE_EXAMPLE block fit comfortably in ~1k tokens).
+    game_schema_max_tokens: int = 1024
+    # Hard timeout per 35B call. On timeout we fall back to the
+    # deterministic minimum profile and continue without blocking the
+    # phase boundary.
+    game_schema_timeout_s: float = 60.0
 
     # Run directory — all other dirs are relative to this.
     # Auto-generated from model_name + timestamp if None.
@@ -234,6 +719,29 @@ class CoEvolutionConfig:
     rewards_dir: str = "rewards"
     tensorboard_dir: str = "tensorboard"
     debug_io_dir: str = "debug_io"
+
+    # T2.4 — single reward sink. When set (auto-resolved by
+    # ``resolve_paths`` to ``{rewards_dir}/reward_log.jsonl`` if left
+    # empty), the orchestrator constructs a ``harness.RewardLogger``
+    # against this path and threads it through every rollout. Each
+    # ``GRPORecord`` written by the trainer is mirrored into the same
+    # JSONL (``kind="grpo_step"``) so eval and training read from one
+    # source. Set to ``""`` to disable.
+    reward_log_path: str = ""
+
+    # T2.7 — curator overfit mitigation. The CURATOR LoRA receives a
+    # scaled GRPO reward equal to ``base * min(1, step / warmup) *
+    # curator_weight``. With ``curator_warmup_steps=0`` (default) the
+    # ramp is disabled and the scalar reward passes through unchanged
+    # (``curator_weight`` still applies as a constant). Set
+    # ``curator_warmup_steps`` to a small positive integer (e.g. 50)
+    # to dampen early-training noise; set ``curator_weight`` < 1.0
+    # for a permanent down-weight (the curator becomes a tie-breaker
+    # rather than a hard gate). Wired via
+    # ``skill_agents.bank_maintenance.llm_curator.set_curator_warmup``
+    # at the start of every outer-loop step.
+    curator_weight: float = 1.0
+    curator_warmup_steps: int = 0
 
     # Debug: log every LLM I/O and GRPO sample to disk for inspection
     debug_io: bool = False
@@ -272,6 +780,31 @@ class CoEvolutionConfig:
     # Skills are copied only when the game's bank is empty; once the
     # co-evolution loop adds its own skills, the seed is never re-applied.
     seed_bank_dir: Optional[str] = None
+
+    # Storage layout for the skill bank across curriculum games.
+    #
+    # ``"per_game"`` (default, legacy):
+    #     One ``<bank_dir>/<game>/skill_bank.jsonl`` per game. Skills
+    #     never cross game boundaries on disk; cross-game effects only
+    #     accumulate at the LoRA-weight level.
+    #
+    # ``"shared"`` (cross-game lifelong-learning experiments):
+    #     One ``<bank_dir>/skill_bank.jsonl`` shared across all games.
+    #     Eligibility is enforced at runtime by the harness's
+    #     ``EligibilityFilter`` task-axis veto (F2′,
+    #     ``harness/README §22``) — every skill carries
+    #     ``feasible_tasks=[<game>]`` so SoR2-mined skills only fire on
+    #     SoR2 states unless the cross-game translator
+    #     (``skill_agents.skill_bank.translate_for_target``) emits an
+    #     explicit derived record. Pair with
+    #     ``--seed-bank-dir`` and the per-phase translation step in
+    #     ``scripts/run_phase1_curriculum.sh`` for the full lifelong
+    #     pipeline.
+    #
+    # Default ``"per_game"`` preserves every prior run's behaviour
+    # bit-for-bit; the shared path is opt-in via
+    # ``run_coevolution.py --bank-mode shared``.
+    bank_mode: str = "per_game"
 
     # Thread/process executors
     thread_workers: int = 64
@@ -326,7 +859,7 @@ class CoEvolutionConfig:
         """Rebase all directory paths under ``run_dir``.
 
         If ``run_dir`` is ``None``, generates one from the model name
-        and current timestamp (e.g. ``runs/Qwen3-8B_20260315_143022``).
+        and current timestamp (e.g. ``runs/Qwen3.5-9B_20260427_131800``).
 
         Idempotent — calling twice is safe.
         """
@@ -353,6 +886,14 @@ class CoEvolutionConfig:
         self.rewards_dir = _rebase(self.rewards_dir)
         self.tensorboard_dir = _rebase(self.tensorboard_dir)
         self.debug_io_dir = _rebase(self.debug_io_dir)
+        # T2.4 — auto-place the unified reward log under ``rewards_dir``
+        # when the field was left at its default empty string. Explicit
+        # ``""`` after ``resolve_paths()`` means the user disabled the
+        # sink (already-resolved paths are not re-rebased).
+        if self.reward_log_path == "":
+            self.reward_log_path = str(Path(self.rewards_dir) / "reward_log.jsonl")
+        elif not Path(self.reward_log_path).is_absolute():
+            self.reward_log_path = str(root / self.reward_log_path)
 
         self._resolved = True
         return self
@@ -392,15 +933,16 @@ class CoEvolutionConfig:
     def get_episodes_for_game(self, game: str) -> int:
         """Return the episode count for *game*.
 
-        In unified-role mode, per-game overrides are applied
-        (5 for Avalon, 7 for Diplomacy by default).  Otherwise
-        the global ``episodes_per_game`` is returned for all games.
+        Per-game overrides apply in BOTH modes:
+          * Unified-role mode: covers role-coverage fan-out (5 for Avalon,
+            7 for Diplomacy by default).
+          * Standard per-game mode: covers high-variance sparse-reward
+            games (gymv shooters / brawlers default to 16 to keep the
+            sampling-noise floor below ~5%; see
+            :data:`HIGH_VARIANCE_GYMV_EPISODES`).
+        Games not in the override dict use the global ``episodes_per_game``.
         """
-        if self.unified_role_rollouts:
-            return self.episodes_per_game_overrides.get(
-                game, self.episodes_per_game,
-            )
-        return self.episodes_per_game
+        return self.episodes_per_game_overrides.get(game, self.episodes_per_game)
 
     def active_games(self, step: int) -> List[str]:
         """Return the list of active games for the given training step.
@@ -519,6 +1061,12 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
     import torch
     from peft import LoraConfig, TaskType, get_peft_model
     from transformers import AutoConfig, AutoModelForCausalLM
+    try:
+        # transformers 5.x exposes the multimodal "image-text-to-text" auto class
+        # used by Qwen3.5 / Qwen3-VL.  Fall back gracefully for text-only setups.
+        from transformers import AutoModelForImageTextToText  # type: ignore
+    except ImportError:  # pragma: no cover — older transformers
+        AutoModelForImageTextToText = None  # type: ignore
 
     logger = logging.getLogger(__name__)
     force = config.start_mode == "from_scratch"
@@ -593,19 +1141,30 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
         return result
 
     # ── Resolve target_modules from model architecture ────────────
-    target_modules = config.lora_target_modules
-    if target_modules is None:
-        model_cfg = AutoConfig.from_pretrained(
-            config.model_name, trust_remote_code=True,
-        )
-        arch = getattr(model_cfg, "model_type", "")
-        if "qwen" in arch.lower():
-            target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj",
-            ]
-        else:
-            target_modules = ["q_proj", "v_proj"]
+    model_cfg = AutoConfig.from_pretrained(
+        config.model_name, trust_remote_code=True,
+    )
+    # Multimodal Qwen3.5 / Qwen3-VL configs nest the language-model spec under
+    # ``text_config``.  Use it for arch-detection so we identify the LM type
+    # (e.g. ``qwen3_5_text``) rather than the umbrella multimodal type.
+    text_cfg = getattr(model_cfg, "text_config", model_cfg)
+    text_arch = (getattr(text_cfg, "model_type", "") or "").lower()
+    is_multimodal = hasattr(model_cfg, "text_config") or hasattr(model_cfg, "vision_config")
+
+    # ── T2.11 closure: single-source-of-truth target_modules resolver ──
+    # SFT and GRPO must write/read the same LoRA shape, otherwise legs
+    # missing in one recipe silently drop deltas at the boundary.  We
+    # therefore delegate to ``trainer.SFT.lora_targets`` for both
+    # pipelines — see ``implementation_notes/pre-training-readiness-audit.md``
+    # §0.3.  Qwen3.5 hybrid stack reaches ALL GatedDeltaNet legs incl.
+    # ``in_proj_z/b/a`` (``in_proj_z`` is hidden×value_dim, NOT tiny — the
+    # earlier "skip the gating legs" rationale undercounted it).
+    from trainer.SFT.lora_targets import resolve_target_modules as _resolve_targets
+
+    target_modules = _resolve_targets(
+        text_arch=text_arch,
+        explicit=config.lora_target_modules,
+    )
 
     lora_cfg = LoraConfig(
         r=config.lora_r,
@@ -624,11 +1183,21 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
     )
     logger.info(
         "Loading base model '%s' on CPU to initialise %d adapter(s) "
-        "[init=%s, r=%d, alpha=%d]: %s",
+        "[init=%s, r=%d, alpha=%d, arch=%s, multimodal=%s]: %s",
         config.model_name, len(need_init), init_desc,
-        config.lora_r, config.lora_alpha, need_init,
+        config.lora_r, config.lora_alpha,
+        text_arch or "unknown", is_multimodal, need_init,
     )
-    base_model = AutoModelForCausalLM.from_pretrained(
+    # For multimodal Qwen3.5 / Qwen3-VL the umbrella ``Qwen3_5Config`` lacks
+    # ``vocab_size`` (lives under ``text_config``), so ``AutoModelForCausalLM``
+    # crashes when fed the outer config.  Use ``AutoModelForImageTextToText``
+    # in that case — the LoRA target_modules above still only match text
+    # decoder linears, leaving the (frozen) vision tower untouched.
+    if is_multimodal and AutoModelForImageTextToText is not None:
+        loader_cls = AutoModelForImageTextToText
+    else:
+        loader_cls = AutoModelForCausalLM
+    base_model = loader_cls.from_pretrained(
         config.model_name,
         torch_dtype=torch.bfloat16,
         device_map="cpu",

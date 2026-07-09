@@ -2,10 +2,8 @@
 Dummy language agent for multi-game environments: takes state (natural language)
 and generates action (natural language) using an LLM (GPT / ask_model).
 
-Supports env_wrappers for 6 games:
-  - GamingAgent (LMGame-Bench): 2048, Candy Crush, Tetris, Super Mario Bros
-  - AvalonNLWrapper:   hidden-role deduction (actions: team proposals, approve/reject, pass/fail, target)
-  - DiplomacyNLWrapper: strategic negotiation (actions: order strings like "A PAR - BUR")
+Supports GamingAgent (LMGame-Bench) text games: 2048, Candy Crush, Tetris, and
+similar env_wrappers that expose natural-language state and string actions.
 
 The agent auto-detects which game is being played from the observation text, or
 can be told explicitly via the `game` parameter.
@@ -15,52 +13,6 @@ Experience Collection:
   collect all experiences in an Episode object following the data structure defined
   in data_structure.experience. Each step creates an Experience object with state,
   action, reward, next_state, and done fields, all stored within the Episode.
-
-Usage with AvalonNLWrapper (single-agent):
-
-  from env_wrappers import AvalonNLWrapper
-  from agents.dummy_agent import language_agent_action
-
-  env = AvalonNLWrapper(num_players=5, controlled_player=0)
-  obs, info = env.reset()
-  action = language_agent_action(obs, model="gpt-4o-mini")
-  obs, reward, term, trunc, info = env.step(action)
-
-Usage with AvalonNLWrapper (multi-agent):
-
-  from env_wrappers import AvalonNLWrapper
-  from agents.dummy_agent import language_agent_action
-
-  env = AvalonNLWrapper(num_players=5)
-  obs, info = env.reset()         # obs: {player_id: nl_str}
-  actions = {
-      pid: language_agent_action(obs_str, model="gpt-4o-mini")
-      for pid, obs_str in obs.items()
-  }
-  obs, rewards, term, trunc, info = env.step(actions)
-
-Usage with DiplomacyNLWrapper (single-agent):
-
-  from env_wrappers import DiplomacyNLWrapper
-  from agents.dummy_agent import language_agent_action
-
-  env = DiplomacyNLWrapper(controlled_power="FRANCE")
-  obs, info = env.reset()
-  action = language_agent_action(obs, model="gpt-4o-mini")
-  obs, reward, term, trunc, info = env.step(action)
-
-Usage with DiplomacyNLWrapper (multi-agent):
-
-  from env_wrappers import DiplomacyNLWrapper
-  from agents.dummy_agent import language_agent_action
-
-  env = DiplomacyNLWrapper()
-  obs, info = env.reset()         # obs: {power_name: nl_str}
-  actions = {
-      power: language_agent_action(obs_str, model="gpt-4o-mini")
-      for power, obs_str in obs.items()
-  }
-  obs, rewards, term, trunc, info = env.step(actions)
 """
 
 import json
@@ -1062,7 +1014,7 @@ def _build_diplomacy_tools() -> list:
 def ask_gpt_function_action(
     state_nl: str,
     game: Optional[str] = None,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.5",
     temperature: float = 0.3,
 ) -> Union[str, List[str]]:
     """
@@ -1203,7 +1155,7 @@ def language_agent_action(
         return ask_gpt_function_action(
             state_nl,
             game=game,
-            model=model or "gpt-4o-mini",
+            model=model or "gpt-5.5",
             temperature=temperature,
         )
     return ask_model_action(

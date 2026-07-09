@@ -297,6 +297,30 @@ class GamingAgentNLWrapper:
             nl += f"\n\nValid actions: {', '.join(self._action_names)}. Choose one."
         return nl
 
+    def _promote_visual_fields(self, obs: Any, info: Dict[str, Any]) -> None:
+        """Promote GamingAgent ``Observation`` perception fields from ``obs``
+        into the top-level ``info`` dict.
+
+        ``_GymLikeWrapper._obs_to_dict`` already produces a dict that mirrors
+        the canonical ``Observation`` contract (``img_path``, ``image``,
+        ``textual_representation``, ``processed_visual_description``,
+        ``background``).  Bubbling those up makes both the NL agent and any
+        downstream multimodal pipeline (see
+        :mod:`env_wrappers.visual_utils`) able to read pixels off ``info``
+        directly without inspecting ``info['raw_obs']``.
+        """
+        if not isinstance(obs, dict):
+            return
+        for key in (
+            "img_path",
+            "image",
+            "textual_representation",
+            "processed_visual_description",
+            "background",
+        ):
+            if obs.get(key) is not None and key not in info:
+                info[key] = obs[key]
+
     def reset(
         self,
         *,
@@ -316,6 +340,10 @@ class GamingAgentNLWrapper:
         detected = self._game_name or info["structured_state"].get("game", "text_game")
         info["env_name"] = "gamingagent"
         info["game_name"] = detected
+        # Preserve raw observation (incl. img_path / image array when vision
+        # mode is enabled) so multimodal agents can pick it up alongside NL.
+        info["raw_obs"] = obs
+        self._promote_visual_fields(obs, info)
         return nl, info
 
     def step(
@@ -339,6 +367,8 @@ class GamingAgentNLWrapper:
         detected = self._game_name or info["structured_state"].get("game", "text_game")
         info["env_name"] = "gamingagent"
         info["game_name"] = detected
+        info["raw_obs"] = obs
+        self._promote_visual_fields(obs, info)
         return nl, float(reward), bool(terminated), bool(truncated), info
 
     def close(self) -> None:

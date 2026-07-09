@@ -1,0 +1,91 @@
+{
+  "source_game": "twenty_forty_eight",
+  "target_game": "tetris",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/twenty_forty_eight/skill_bank.jsonl",
+  "actions_root": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_actions_out/run_20260430_064325",
+  "k": 4,
+  "pass_rate_min": 0.5,
+  "max_skills": 3,
+  "max_demos_per_episode": 2,
+  "max_episodes": 3,
+  "n_skills": 3,
+  "n_passed_target_pass_rate": 2,
+  "n_verified_tasks_promoted": 2,
+  "eligibility_before_admit_count": 0,
+  "eligibility_after_admit_count": 2,
+  "eligibility_admit_delta": 2,
+  "elapsed_s": 1.18,
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__MERGE",
+      "skill_type": "action",
+      "source_task": "twenty_forty_eight",
+      "target_task": "tetris",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 0,
+      "n_aborted": 0,
+      "pass_rate": 0.0,
+      "success": false,
+      "diagnostic_label": "adaptation_overfitting",
+      "cost_ms": 0.5533695220947266,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": false,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": []
+    },
+    {
+      "skill_id": "mid:OPTIMIZE",
+      "skill_type": "action",
+      "source_task": "twenty_forty_eight",
+      "target_task": "tetris",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 0.3802776336669922,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "tetris"
+      ]
+    },
+    {
+      "skill_id": "COMPARE__MERGE",
+      "skill_type": "reasoning",
+      "source_task": "twenty_forty_eight",
+      "target_task": "tetris",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 0.25200843811035156,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "tetris"
+      ]
+    }
+  ],
+  "timestamp": "20260501_041246"
+}

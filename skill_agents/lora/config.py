@@ -1,8 +1,9 @@
 """
 Configuration for the multi-LoRA skill-bank LLM (GRPO edition).
 
-One shared Qwen3-8B backbone, 3 GRPO-trained LoRA adapters
-(segment, contract, curator).
+One shared Qwen/Qwen3.5-9B backbone, 3 GRPO-trained LoRA adapters
+(segment, contract, curator).  See ``common.models.BACKBONE_MODEL``
+for the project-wide actor / skill-bank backbone.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ class MultiLoraConfig:
     Parameters
     ----------
     base_model_name_or_path : str
-        HuggingFace model id or local path for Qwen3-8B.
+        HuggingFace model id or local path for the Qwen3.5-9B backbone.
     adapter_paths : dict
         ``{function_name: path_to_adapter}``.  Active GRPO keys:
         ``"segment"``, ``"contract"``, ``"curator"``.
@@ -52,7 +53,7 @@ class MultiLoraConfig:
         the backward pass.  Recommended for GRPO training.
     """
 
-    base_model_name_or_path: str = "Qwen/Qwen3-8B"
+    base_model_name_or_path: str = "Qwen/Qwen3.5-9B"
     adapter_paths: Dict[str, str] = field(default_factory=dict)
     default_function: str = "boundary"
     device: str = "auto"
@@ -123,7 +124,7 @@ class LoraTrainingConfig:
     """
 
     skill_function: str = "boundary"
-    base_model_name_or_path: str = "Qwen/Qwen3-8B"
+    base_model_name_or_path: str = "Qwen/Qwen3.5-9B"
     output_dir: str = "runs/lora_adapters/boundary"
     lora_r: int = 16
     lora_alpha: int = 32

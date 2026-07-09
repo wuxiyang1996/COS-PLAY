@@ -1,0 +1,74 @@
+<state>
+domain=desktop
+task=0810415c-bde4-4443-9047-d5f70165a697
+goal=Make the line spacing of first two paragraph into double line spacing
+step=18
+
+<entities>
+e1[type=region, label=writer_window, bid=null, pos=31,0,993,576, ontology=container_entity]
+e2[type=element, label=menu_format, bid=null, pos=199,13,43,17, ontology=interactive_entity]
+e3[type=element, label=line_spacing, bid=null, pos=1213,97,26,23, ontology=interactive_entity]
+e4[type=element, label=paragraphs_text, bid=null, pos=345,228,378,251, ontology=selectable_entity]
+e5[type=region, label=document_page, bid=null, pos=292,153,437,412, ontology=navigable_region]
+e6[type=element, label=vertical_scroll, bid=null, pos=989,145,11,420, ontology=interactive_entity]
+e7[type=text, label=status_page, bid=null, pos=36,568,65,8, ontology=textual_anchor]
+e8[type=element, label=help_bar, bid=null, pos=32,90,962,19, ontology=interactive_entity]
+e9[type=element, label=donate_bar, bid=null, pos=32,111,962,20, ontology=interactive_entity]
+</entities>
+
+<attributes>
+e1.state=visible
+e3.state=visible
+e4.state=visible
+e5.state=visible
+e6.state=visible
+e7.value=Page 1 of 4
+</attributes>
+
+<affordances>
+e2.affords=[focus, open, select]
+e3.affords=[focus, open, select]
+e4.affords=[focus, select, inspect, read]
+e6.affords=[focus, select]
+e8.affords=[focus, inspect]
+e9.affords=[focus, inspect]
+</affordances>
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e5)
+contains(e5,e4)
+contains(e1,e6)
+adjacent(e8,e9)
+adjacent(e5,e6)
+</relations>
+
+<state_flags>
+progress=0.75
+phase=mid
+scene_type=main_menu
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e3
+blocker=null
+constraint=need to set selected first two paragraphs to double spacing
+candidate_set=[e3,e2,e4]
+history_anchor=e3
+
+<uncertainty>
+e3.label=medium
+e4.state=medium
+</uncertainty>
+
+<actions>
+a1=pyautogui.click(1226, 108)
+a2=pyautogui.click(200, 13)
+a3=pyautogui.press('enter')
+a4=pyautogui.press('escape')
+a5=pyautogui.click(1415, 147)
+</actions>
+</state>

@@ -36,7 +36,8 @@ export HF_HOME="${HF_HOME:-/workspace/huggingface}"
 export HF_HUB_CACHE="${HF_HOME}/hub"
 
 # ── Configurable via environment variables ──
-MODEL="${SFT_MODEL:-Qwen/Qwen3-8B}"
+# Actor + skill-bank backbone — see common/models.py BACKBONE_MODEL.
+MODEL="${SFT_MODEL:-Qwen/Qwen3.5-9B}"
 OUTPUT="${SFT_OUTPUT:-runs/sft_coldstart}"
 EPOCHS="${SFT_EPOCHS:-3}"
 LR="${SFT_LR:-2e-4}"

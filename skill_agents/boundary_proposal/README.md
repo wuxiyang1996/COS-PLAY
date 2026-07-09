@@ -383,6 +383,39 @@ skill_agents/boundary_proposal/
 | `get_signal_extractor()` | `signal_extractors` | Factory: rule-based / LLM / hybrid |
 | `BoundaryPreferenceScorer` | `boundary_preference` | Plausibility scoring for cut points (signal strength + predicate discontinuity + learned preference) |
 | `BoundaryPreferenceConfig` | `boundary_preference` | Configuration for boundary preference scoring |
+| `parse_intention_tag()` | `signal_extractors` | Extract canonical `[TAG]` from `Experience.intentions`, accepting **both** intention vocabularies (see below) |
+
+---
+
+## Intention-tag vocabularies (`parse_intention_tag`)
+
+`parse_intention_tag(intention, tags=…, extra_tags=…)` is the entry
+point used everywhere in the segmenter to convert the
+`Experience.intentions` string (`"[TAG] subgoal phrase"`) into a
+canonical token. It accepts **two vocabularies side-by-side** so banks
+extracted from either corpus segment correctly without per-corpus code
+branches:
+
+| Vocabulary           | Tokens                                                                                                                               | Source                                                                                          |
+|----------------------|--------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `_SUBGOAL_TAGS_DEFAULT`     | `SETUP / CLEAR / MERGE / ATTACK / DEFEND / NAVIGATE / POSITION / COLLECT / BUILD / SURVIVE / OPTIMIZE / EXPLORE / EXECUTE` (13) | env_wrappers — emitted by `decision_agents.agent_helper.infer_intention`                         |
+| `_INTENT_OPERATORS_DEFAULT` | `INSPECT / TRACK / COMPARE / COMMIT / VERIFY / RECOVER` (6)                                                                  | gym-v Temporal ROMs — emitted by `labeling/label_intentions_gpt54.py`                            |
+
+`_TAG_ALIASES` maps common drift / synonyms into either vocabulary
+(e.g. `WATCH → TRACK`, `DODGE → RECOVER`, `MOVE → NAVIGATE`,
+`MATCH → CLEAR`), so a hand-written or older `[WATCH]` prefix still
+classifies into the new alphabet without an `UNKNOWN` fallback.
+
+In practice this means the `intention_fit` term in Stage 2's scorer
+fires correctly on either tag family, the boundary-preference scorer
+treats `[VERIFY] → [COMMIT]` and `[CLEAR] → [SURVIVE]` transitions
+identically (both are tag-change events), and a single skill bank can
+hold compound labels like `endgame:MERGE` (env_wrappers) and
+`mid:COMMIT` (gym-v) in the same JSONL.
+
+If you add a new step-level vocabulary in the future, extend
+`_INTENT_OPERATORS_DEFAULT` (or pass it as `extra_tags=`) and add the
+common synonyms to `_TAG_ALIASES` — no other code change is required.
 
 ---
 

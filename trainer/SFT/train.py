@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         description="SFT cold-start training for decision + skill-bank LoRA adapters",
     )
     p.add_argument(
-        "--model_name", type=str, default="Qwen/Qwen3-8B",
+        "--model_name", type=str, default="Qwen/Qwen3.5-9B",
         help="Base model (must match co-evolution config)",
     )
     p.add_argument(
@@ -111,7 +111,96 @@ def parse_args() -> argparse.Namespace:
         "--gpu", type=int, default=None,
         help="(internal) Pin this process to a specific GPU (used by parallel launcher)",
     )
+    p.add_argument(
+        "--gpus_per_adapter", type=int, default=1,
+        help=(
+            "How many GPUs each adapter gets (default 1).  When >1 every "
+            "adapter is launched under ``accelerate launch --num_processes N`` "
+            "with DDP — HF Trainer auto-detects the multi-process env and "
+            "data-parallels its way through.  Effective batch becomes "
+            "``per_device_bs × N × grad_accum``; pair with ``--scale_lr N`` "
+            "for the linear-scale rule.  With 8 H200s and 5 adapters: "
+            "``--gpus_per_adapter 1`` uses 5 GPUs (3 idle), "
+            "``--gpus_per_adapter 2`` runs 4 adapters at a time on 8 GPUs, "
+            "``--gpus_per_adapter 4`` runs 2 adapters at a time."
+        ),
+    )
+    # ── Speed / kernel knobs (T2.11 closure) ─────────────────────────
+    p.add_argument(
+        "--use_liger_kernel", dest="use_liger_kernel",
+        action="store_true", default=True,
+        help="Apply liger-kernel fused Qwen3.5 patches (default: True).",
+    )
+    p.add_argument(
+        "--no_liger_kernel", dest="use_liger_kernel", action="store_false",
+        help="Disable liger-kernel even if installed.",
+    )
+    p.add_argument(
+        "--gradient_checkpointing", dest="gradient_checkpointing",
+        action="store_true", default=True,
+        help=(
+            "Activation checkpointing (default: True).  Required for "
+            "single-GPU bs=16 + 9B; disable only when memory permits."
+        ),
+    )
+    p.add_argument(
+        "--no_gradient_checkpointing", dest="gradient_checkpointing",
+        action="store_false",
+        help=(
+            "Disable activation checkpointing — buys ~30-40 % throughput "
+            "but requires either smaller bs or multi-GPU per adapter "
+            "(``--gpus_per_adapter 2+``)."
+        ),
+    )
+    p.add_argument(
+        "--optim", type=str, default=None,
+        help=(
+            "HF Trainer optim string.  Defaults to 'paged_adamw_8bit' when "
+            "bitsandbytes is available, else 'adamw_torch_fused'."
+        ),
+    )
+    p.add_argument(
+        "--dataloader_workers", type=int, default=4,
+        help="DataLoader worker count (default: 4).",
+    )
+    p.add_argument(
+        "--strict_lora_coverage", action="store_true", default=False,
+        help=(
+            "Abort if any required projection has zero LoRA-wrapped layers "
+            "(catches T2.11-style recipe drift)."
+        ),
+    )
+    p.add_argument(
+        "--scale_effective_batch", type=float, default=1.0,
+        help=(
+            "Multiply every per-adapter ``batch_size`` by this factor "
+            "(default 1.0 keeps effective batch = 16).  Increasing past "
+            "1.0 is **Lever B** in T2.12 — fewer optimizer steps, "
+            "faster wall-clock, but you should also scale LR roughly "
+            "linearly and watch the loss curve.  Use 2.0 for "
+            "effective batch 32, 4.0 for 64."
+        ),
+    )
+    p.add_argument(
+        "--scale_lr", type=float, default=1.0,
+        help=(
+            "Multiply every per-adapter ``lr`` by this factor.  Pair "
+            "with ``--scale_effective_batch`` for the linear-scale rule "
+            "(matched factor = noise-equivalent training)."
+        ),
+    )
     return p.parse_args()
+
+
+def _detect_text_arch(model) -> str:
+    """Return ``model.config.text_config.model_type`` (or fallback)."""
+    cfg = getattr(model, "config", None)
+    if cfg is None and hasattr(model, "base_model"):
+        cfg = getattr(model.base_model, "config", None)
+    if cfg is None:
+        return ""
+    text_cfg = getattr(cfg, "text_config", cfg)
+    return (getattr(text_cfg, "model_type", "") or "").lower()
 
 
 def _build_config(args: argparse.Namespace):
@@ -132,6 +221,13 @@ def _build_config(args: argparse.Namespace):
         "save_steps": args.save_steps,
         "bf16": args.bf16,
         "adapters": args.adapters,
+        "use_liger_kernel": getattr(args, "use_liger_kernel", True),
+        "gradient_checkpointing": getattr(args, "gradient_checkpointing", True),
+        "optim": getattr(args, "optim", None),
+        "dataloader_num_workers": getattr(args, "dataloader_workers", 4),
+        "strict_lora_coverage": getattr(args, "strict_lora_coverage", False),
+        "scale_effective_batch": getattr(args, "scale_effective_batch", 1.0),
+        "scale_lr": getattr(args, "scale_lr", 1.0),
     }
     if args.output_dir:
         kwargs["output_dir"] = args.output_dir
@@ -238,6 +334,26 @@ def train_single_adapter(
         f"{trainable:,}", f"{total:,}", 100 * trainable / total,
     )
 
+    # ── T2.11 sanity check: did every architecturally-required leg
+    # actually get LoRA-wrapped?  Fail-fast on recipe drift so no
+    # future SFT silently ships a 23 % adapter again.
+    from trainer.SFT.lora_targets import assert_lora_coverage
+    text_arch = _detect_text_arch(peft_model)
+    assert_lora_coverage(
+        peft_model,
+        model_arch=text_arch,
+        require_strict=getattr(config, "strict_lora_coverage", False),
+        logger_=logger,
+    )
+
+    from trainer.SFT.speed_utils import pick_optim
+    resolved_optim = config.optim or pick_optim(prefer_8bit=True)
+    logger.info(
+        "Trainer optimizer = %s, gradient_checkpointing=%s, "
+        "dataloader_workers=%d",
+        resolved_optim, config.gradient_checkpointing, config.dataloader_num_workers,
+    )
+
     hf_output = str(output_path / "hf_trainer")
     training_args = TrainingArguments(
         output_dir=hf_output,
@@ -252,8 +368,15 @@ def train_single_adapter(
         eval_strategy="steps",
         eval_steps=config.save_steps,
         bf16=config.bf16,
-        gradient_checkpointing=True,
+        gradient_checkpointing=config.gradient_checkpointing,
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        optim=resolved_optim,
+        dataloader_num_workers=config.dataloader_num_workers,
+        dataloader_pin_memory=True,
+        # ``group_by_length`` was removed in transformers 5.x in favour
+        # of explicit ``LengthGroupedSampler`` use.  Skipped here — the
+        # pad-savings optimisation is small for our seq lengths and
+        # liger-kernel + paged-AdamW are doing the heavy lifting.
         report_to="none",
         remove_unused_columns=False,
     )
@@ -322,7 +445,11 @@ def train_all_adapters(config=None, gpu: Optional[int] = None, **kwargs) -> dict
         ``{adapter_name: output_path}`` for each trained adapter.
     """
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+    try:
+        from transformers import AutoModelForImageTextToText  # type: ignore
+    except ImportError:  # pragma: no cover — older transformers <5
+        AutoModelForImageTextToText = None  # type: ignore
     from trainer.SFT.config import SFTConfig
     from trainer.SFT.data_loader import load_all_adapter_datasets
 
@@ -335,6 +462,24 @@ def train_all_adapters(config=None, gpu: Optional[int] = None, **kwargs) -> dict
 
     logger.info("SFT cold-start config: model=%s, output=%s", config.model_name, config.output_dir)
     logger.info("Adapters to train: %s", config.adapters_to_train)
+
+    # ── Speed-up scaffolding ─────────────────────────────────────────
+    # Order matters: TF32 is a no-op if tensors aren't fp32 already, but
+    # liger-kernel patches model classes — must run before
+    # ``AutoModelForCausalLM.from_pretrained``.
+    from trainer.SFT.speed_utils import enable_tf32, apply_liger_kernel
+    enable_tf32()
+    if config.use_liger_kernel:
+        try:
+            from transformers import AutoConfig
+            _probe_cfg = AutoConfig.from_pretrained(config.model_name, trust_remote_code=True)
+            _probe_arch = (
+                getattr(getattr(_probe_cfg, "text_config", _probe_cfg), "model_type", "")
+                or ""
+            ).lower()
+            apply_liger_kernel(_probe_arch)
+        except Exception as exc:
+            logger.warning("liger-kernel probe failed: %s — proceeding without it.", exc)
 
     t0 = time.time()
 
@@ -349,8 +494,33 @@ def train_all_adapters(config=None, gpu: Optional[int] = None, **kwargs) -> dict
         tokenizer.pad_token = tokenizer.eos_token
 
     dtype = torch.bfloat16 if config.bf16 else torch.float32
-    logger.info("Loading base model '%s' (dtype=%s) …", config.model_name, dtype)
-    base_model = AutoModelForCausalLM.from_pretrained(
+    # T2.13 fix (2026-05-03): on multimodal Qwen3.5 the umbrella config has
+    # ``text_config`` + ``vision_config`` and the architecture is
+    # ``Qwen3_5ForConditionalGeneration``.  ``AutoModelForCausalLM`` returns
+    # the language-only sub-model (``Qwen3_5ForCausalLM``) and PEFT saves
+    # LoRA keys without the ``language_model.`` prefix — but
+    # ``trainer/coevolution/prepare_adapters`` and the vLLM serve path load
+    # the full multimodal model where the LM lives under
+    # ``model.language_model.layers.*``.  The structural prefix mismatch
+    # silently zero-inits the LoRA at load time (lora_B = 0 → delta = 0),
+    # dropping the cold-start signal at the SFT→GRPO/vLLM boundary.  Match
+    # the production loader so saved keys carry the ``language_model.``
+    # prefix natively.  See ``evaluation/fix_lora_keys_for_vlm_loader.py``
+    # for a one-shot remap of legacy LM-only-keyed checkpoints.
+    _probe_cfg2 = AutoConfig.from_pretrained(config.model_name, trust_remote_code=True)
+    is_multimodal = hasattr(_probe_cfg2, "text_config") or hasattr(_probe_cfg2, "vision_config")
+    if is_multimodal and AutoModelForImageTextToText is not None:
+        loader_cls = AutoModelForImageTextToText
+        logger.info(
+            "Multimodal Qwen3.5 detected (text_config+vision_config) — using "
+            "AutoModelForImageTextToText to keep LoRA keys in lock-step with "
+            "vLLM/GRPO production loaders."
+        )
+    else:
+        loader_cls = AutoModelForCausalLM
+    logger.info("Loading base model '%s' (dtype=%s, loader=%s) …",
+                config.model_name, dtype, loader_cls.__name__)
+    base_model = loader_cls.from_pretrained(
         config.model_name,
         torch_dtype=dtype,
         trust_remote_code=True,
@@ -409,11 +579,11 @@ def train_all_adapters(config=None, gpu: Optional[int] = None, **kwargs) -> dict
 
 
 def _print_progress(processes: list, t0: float):
-    """Tail the last progress line from each GPU's log file."""
+    """Tail the last progress line from each chunk's log file."""
     import re
     elapsed = time.time() - t0
     parts = [f"[{elapsed/60:.0f}m]"]
-    for gpu, adapter_list, proc, _lf, log_path in processes:
+    for chunk, adapter_list, proc, _lf, log_path in processes:
         status = "running" if proc.poll() is None else (
             "done" if proc.returncode == 0 else f"FAIL({proc.returncode})"
         )
@@ -433,40 +603,97 @@ def _print_progress(processes: list, t0: float):
         except Exception:
             pass
         names = "+".join(adapter_list)
-        parts.append(f"GPU{gpu}[{names}]:{status}{progress}")
+        chunk_label = ",".join(map(str, chunk))
+        parts.append(f"GPU[{chunk_label}][{names}]:{status}{progress}")
     logger.info("  ".join(parts))
 
 
-def _train_parallel(config, gpu_ids: List[int]) -> dict:
-    """Launch one subprocess per adapter, each pinned to a different GPU.
+def _train_parallel(config, gpu_ids: List[int], gpus_per_adapter: int = 1) -> dict:
+    """Launch one subprocess per adapter, each pinned to a chunk of GPUs.
 
-    Each subprocess runs ``python -m trainer.SFT.train --adapters <name>
-    --gpu <id>`` so it loads the base model only on that GPU and trains
-    independently.  Wall-clock time = slowest adapter instead of sum.
+    With ``gpus_per_adapter == 1`` (default) each adapter gets one GPU
+    and one ``python -m trainer.SFT.train --gpu <id>`` subprocess.
+
+    With ``gpus_per_adapter > 1`` GPUs are grouped into contiguous
+    chunks of that size and each adapter gets one chunk; the
+    subprocess is launched under ``accelerate launch
+    --num_processes <N>`` so HF Trainer data-parallels across the chunk.
+    Effective batch becomes ``per_device_bs × N × grad_accum``; users
+    should pair with ``--scale_lr <N>`` for the linear-scale rule.
+
+    Wall-clock time = slowest adapter (across waves if there are more
+    adapters than chunks).
     """
     from trainer.SFT.config import SFTConfig
 
     adapters = config.adapters_to_train
     n_adapters = len(adapters)
     n_gpus = len(gpu_ids)
+    gpa = max(1, int(gpus_per_adapter))
 
-    if n_gpus < n_adapters:
-        logger.warning(
-            "Only %d GPUs for %d adapters — some GPUs will train multiple adapters sequentially",
-            n_gpus, n_adapters,
+    if n_gpus < gpa:
+        raise ValueError(
+            f"--gpus_per_adapter={gpa} but only {n_gpus} GPU IDs given. "
+            f"Need at least {gpa} GPUs."
         )
 
-    gpu_assignment: Dict[int, List[str]] = {g: [] for g in gpu_ids}
+    # Build GPU chunks: contiguous slices of size ``gpa``.
+    chunks: List[List[int]] = []
+    for i in range(0, n_gpus - n_gpus % gpa, gpa):
+        chunks.append(gpu_ids[i : i + gpa])
+    n_chunks = len(chunks)
+
+    if n_chunks == 0:
+        raise ValueError(
+            f"No usable GPU chunks for --gpus_per_adapter={gpa} on "
+            f"--gpus={gpu_ids}",
+        )
+
+    if n_chunks < n_adapters:
+        logger.warning(
+            "Only %d chunk(s) of %d GPU(s) for %d adapters — chunks will "
+            "train multiple adapters sequentially in waves.",
+            n_chunks, gpa, n_adapters,
+        )
+
+    # Round-robin adapters across chunks.
+    chunk_assignment: List[List[str]] = [[] for _ in chunks]
     for i, adapter in enumerate(adapters):
-        gpu = gpu_ids[i % n_gpus]
-        gpu_assignment[gpu].append(adapter)
+        chunk_assignment[i % n_chunks].append(adapter)
 
-    logger.info("Parallel training plan:")
-    for gpu, adapter_list in sorted(gpu_assignment.items()):
+    logger.info(
+        "Parallel training plan: gpus_per_adapter=%d, %d chunks across %d GPUs",
+        gpa, n_chunks, n_gpus,
+    )
+    for chunk, adapter_list in zip(chunks, chunk_assignment):
         if adapter_list:
-            logger.info("  GPU %d: %s", gpu, ", ".join(adapter_list))
+            launcher = "accelerate(DDP)" if gpa > 1 else "python"
+            logger.info(
+                "  chunk GPU %s [%s]: %s",
+                ",".join(map(str, chunk)), launcher, ", ".join(adapter_list),
+            )
 
-    base_cmd = [sys.executable, "-m", "trainer.SFT.train"]
+    # Split base launcher into "pre-script" args (consumed by accelerate
+    # or the shell) and the "-m trainer.SFT.train" tail.  Per-chunk
+    # ``--main_process_port`` is injected between them below.
+    if gpa > 1:
+        # Resolve ``accelerate`` from the same env as the parent
+        # interpreter so we don't rely on PATH (the launcher may run
+        # from a shell whose conda env differs from the trainer's).
+        _accel_bin = Path(sys.executable).parent / "accelerate"
+        accelerate_cmd = (
+            str(_accel_bin) if _accel_bin.exists() else "accelerate"
+        )
+        launcher_prefix = [
+            accelerate_cmd, "launch",
+            "--num_processes", str(gpa),
+            "--num_machines", "1",
+            "--mixed_precision", "bf16" if config.bf16 else "no",
+        ]
+        script_invocation = ["-m", "trainer.SFT.train"]
+    else:
+        launcher_prefix = [sys.executable]
+        script_invocation = ["-m", "trainer.SFT.train"]
 
     shared_args = [
         "--model_name", config.model_name,
@@ -490,31 +717,60 @@ def _train_parallel(config, gpu_ids: List[int]) -> dict:
         shared_args.append("--no_bf16")
     if config.games:
         shared_args.extend(["--games"] + config.games)
+    if config.scale_effective_batch != 1.0:
+        shared_args.extend(["--scale_effective_batch", str(config.scale_effective_batch)])
+    if config.scale_lr != 1.0:
+        shared_args.extend(["--scale_lr", str(config.scale_lr)])
+    if config.gradient_checkpointing:
+        shared_args.append("--gradient_checkpointing")
+    else:
+        shared_args.append("--no_gradient_checkpointing")
+    if not config.use_liger_kernel:
+        shared_args.append("--no_liger_kernel")
+    if config.optim is not None:
+        shared_args.extend(["--optim", config.optim])
+    if config.dataloader_num_workers != 4:
+        shared_args.extend(["--dataloader_workers", str(config.dataloader_num_workers)])
+    if config.strict_lora_coverage:
+        shared_args.append("--strict_lora_coverage")
 
     t0 = time.time()
     processes: List[tuple] = []
 
-    for gpu, adapter_list in sorted(gpu_assignment.items()):
+    for chunk, adapter_list in zip(chunks, chunk_assignment):
         if not adapter_list:
             continue
-        cmd = base_cmd + shared_args + [
-            "--adapters",
-        ] + adapter_list + [
-            "--gpu", str(gpu),
-        ]
+        # cmd shape:  [launcher_prefix...] [accelerate launch flags]
+        #             [-m trainer.SFT.train] [--adapters ...] [shared args]
+        cmd = list(launcher_prefix)
+        if gpa > 1:
+            # Inject a chunk-unique master port so concurrent accelerate
+            # launches on the same node don't collide on rendezvous.
+            cmd += ["--main_process_port", str(29500 + chunk[0])]
+        cmd += script_invocation
+        cmd += shared_args + ["--adapters"] + adapter_list
+        # Single-GPU path keeps the legacy ``--gpu N`` flag for log
+        # discoverability; multi-GPU path lets accelerate handle pinning
+        # via CUDA_VISIBLE_DEVICES (the ``--gpu`` flag would conflict).
+        if gpa == 1:
+            cmd += ["--gpu", str(chunk[0])]
 
-        log_path = Path(config.output_dir) / f"sft_gpu{gpu}.log"
+        chunk_label = "_".join(map(str, chunk))
+        log_path = Path(config.output_dir) / f"sft_chunk_{chunk_label}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, chunk))
 
-        logger.info("Launching GPU %d: %s → %s", gpu, adapter_list, log_path)
+        logger.info(
+            "Launching GPUs %s (n=%d) for adapter(s) %s → %s",
+            chunk, gpa, adapter_list, log_path,
+        )
         log_file = open(log_path, "w")
         proc = subprocess.Popen(
             cmd, stdout=log_file, stderr=subprocess.STDOUT, env=env,
         )
-        processes.append((gpu, adapter_list, proc, log_file, log_path))
+        processes.append((chunk, adapter_list, proc, log_file, log_path))
 
     results: dict = {}
     failed: List[str] = []
@@ -522,20 +778,20 @@ def _train_parallel(config, gpu_ids: List[int]) -> dict:
     active = list(processes)
     while active:
         still_running = []
-        for gpu, adapter_list, proc, log_file, log_path in active:
+        for chunk, adapter_list, proc, log_file, log_path in active:
             ret = proc.poll()
             if ret is None:
-                still_running.append((gpu, adapter_list, proc, log_file, log_path))
+                still_running.append((chunk, adapter_list, proc, log_file, log_path))
             else:
                 log_file.close()
                 if ret == 0:
-                    logger.info("GPU %d finished: %s", gpu, adapter_list)
+                    logger.info("GPUs %s finished: %s", chunk, adapter_list)
                     for adapter in adapter_list:
                         results[adapter] = str(config.adapter_output_path(adapter))
                 else:
                     logger.error(
-                        "GPU %d FAILED (exit %d): %s — see %s",
-                        gpu, ret, adapter_list, log_path,
+                        "GPUs %s FAILED (exit %d): %s — see %s",
+                        chunk, ret, adapter_list, log_path,
                     )
                     failed.extend(adapter_list)
         active = still_running
@@ -549,9 +805,10 @@ def _train_parallel(config, gpu_ids: List[int]) -> dict:
     if failed:
         logger.error("Failed adapters: %s", failed)
     logger.info(
-        "Parallel SFT complete: %d/%d adapters in %.1f min (%.1fx vs sequential estimate)",
+        "Parallel SFT complete: %d/%d adapters in %.1f min "
+        "(gpus_per_adapter=%d, %d chunk(s) across %d GPUs)",
         len(results), n_adapters, elapsed / 60,
-        max(1.0, n_adapters / max(1, min(n_adapters, n_gpus))),
+        gpa, n_chunks, n_gpus,
     )
 
     summary_path = Path(config.output_dir) / "sft_summary.json"
@@ -563,7 +820,12 @@ def _train_parallel(config, gpu_ids: List[int]) -> dict:
             "model_name": config.model_name,
             "elapsed_min": round(elapsed / 60, 2),
             "parallel": True,
-            "gpu_assignment": {str(g): a for g, a in gpu_assignment.items() if a},
+            "gpus_per_adapter": gpa,
+            "chunk_assignment": [
+                {"gpus": chunk, "adapters": list(adapter_list)}
+                for chunk, adapter_list in zip(chunks, chunk_assignment)
+                if adapter_list
+            ],
             "lora_r": config.lora_r,
             "lora_alpha": config.lora_alpha,
             "target_modules": config.resolve_target_modules(),
@@ -587,6 +849,7 @@ def main():
 
     if args.parallel:
         adapters = config.adapters_to_train
+        gpa = max(1, int(getattr(args, "gpus_per_adapter", 1)))
         if args.gpus:
             gpu_ids = args.gpus
         else:
@@ -595,12 +858,13 @@ def main():
                 logger.error("--parallel requested but no GPUs detected; falling back to sequential")
                 train_all_adapters(config)
                 return
-            gpu_ids = list(range(min(n_gpus, len(adapters))))
+            # Default: enough GPUs to fit one chunk per adapter, capped by hardware.
+            gpu_ids = list(range(min(n_gpus, len(adapters) * gpa)))
         logger.info(
-            "Parallel mode: %d adapters across GPUs %s",
-            len(adapters), gpu_ids,
+            "Parallel mode: %d adapters across GPUs %s (gpus_per_adapter=%d)",
+            len(adapters), gpu_ids, gpa,
         )
-        _train_parallel(config, gpu_ids)
+        _train_parallel(config, gpu_ids, gpus_per_adapter=gpa)
     else:
         train_all_adapters(config, gpu=args.gpu)
 

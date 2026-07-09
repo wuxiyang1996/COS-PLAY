@@ -14,11 +14,14 @@ Typical lifecycle::
         await manager.reload_adapters()  # hot-reload updated weights
     manager.stop()               # Cleanup at end
 
-Memory budget per instance (Qwen3-8B, A100-80GB, TP=1):
-  - Model weights (bf16):    ~16 GB
-  - Draft model (0.6B bf16): ~1.2 GB  (speculative decoding)
-  - KV cache (gpu_util=0.95): ~59 GB  →  ~365 max sequences @ 1K tokens
-  - Total:                    ~76 GB / 80 GB
+Memory budget per instance (Qwen/Qwen3.5-9B, H200-141GB, TP=1, text-only):
+  - Model weights (bf16):     ~18 GB   (vision tower skipped via --language-model-only)
+  - MTP head (bf16):          ~0.5 GB  (built-in multi-token-prediction)
+  - KV cache (gpu_util=0.95): ~115 GB  →  ample margin even at long contexts
+  - Total:                    ~134 GB / 141 GB
+
+If you flip to draft-model speculative decoding instead of MTP:
+  - Draft model (Qwen3.5-9B has no smaller sibling — pair manually if used)
 """
 
 from __future__ import annotations
@@ -54,7 +57,10 @@ class VLLMServerManager:
         enforce_eager: bool = False,
         log_dir: Optional[str] = None,
         speculative_model: Optional[str] = None,
-        num_speculative_tokens: int = 5,
+        num_speculative_tokens: int = 1,
+        speculative_method: str = "mtp",
+        language_model_only: bool = True,
+        reasoning_parser: Optional[str] = "qwen3",
     ):
         self.model_name = model_name
         self.adapter_dir = adapter_dir
@@ -66,6 +72,9 @@ class VLLMServerManager:
         self.log_dir = log_dir
         self.speculative_model = speculative_model
         self.num_speculative_tokens = num_speculative_tokens
+        self.speculative_method = speculative_method
+        self.language_model_only = language_model_only
+        self.reasoning_parser = reasoning_parser
         self._processes: List[subprocess.Popen] = []
         self._log_files: list = []
         self._speculative_config_json = self._build_speculative_config()
@@ -73,15 +82,36 @@ class VLLMServerManager:
         atexit.register(self.stop)
 
     def _build_speculative_config(self) -> Optional[str]:
-        """Build the JSON string for --speculative_config if a draft model is set."""
-        if not self.speculative_model:
-            return None
+        """Build the JSON string for ``--speculative_config``.
+
+        Two methods are supported:
+
+        ``mtp``
+            Use the model's built-in Multi-Token-Prediction head (Qwen3.5,
+            Qwen3-Next, DeepSeek-V3, …).  No external draft model required.
+
+        ``draft_model``
+            Use a small external model as the drafter.  Required for plain
+            Qwen3 (no MTP head); pass ``speculative_model="Qwen/Qwen3-0.6B"``.
+        """
         import json
-        return json.dumps({
-            "model": self.speculative_model,
-            "num_speculative_tokens": self.num_speculative_tokens,
-            "method": "draft_model",
-        })
+        method = (self.speculative_method or "").lower()
+        if method == "mtp":
+            if self.num_speculative_tokens <= 0:
+                return None
+            return json.dumps({
+                "method": "mtp",
+                "num_speculative_tokens": self.num_speculative_tokens,
+            })
+        if method == "draft_model":
+            if not self.speculative_model:
+                return None
+            return json.dumps({
+                "method": "draft_model",
+                "model": self.speculative_model,
+                "num_speculative_tokens": self.num_speculative_tokens,
+            })
+        return None
 
     @property
     def n_instances(self) -> int:
@@ -153,10 +183,7 @@ class VLLMServerManager:
         self._log_dir_path = log_dir_path
         self._shared_gpus = shared_gpus
 
-        spec_msg = ""
-        if self.speculative_model:
-            spec_msg = (f", spec_decode={self.speculative_model} "
-                        f"({self.num_speculative_tokens} tok)")
+        spec_msg = self._spec_log_suffix()
         if lora_modules:
             logger.info(
                 "Wave 1: started %d vLLM instances (ports %d–%d) "
@@ -182,6 +209,65 @@ class VLLMServerManager:
                 len(second_wave),
             )
 
+    def _spec_log_suffix(self) -> str:
+        """Human-readable spec-decode summary for log messages."""
+        if not self._speculative_config_json:
+            return ""
+        method = (self.speculative_method or "").lower()
+        if method == "mtp":
+            return f", spec_decode=MTP ({self.num_speculative_tokens} tok)"
+        if method == "draft_model" and self.speculative_model:
+            return (f", spec_decode={self.speculative_model} "
+                    f"({self.num_speculative_tokens} tok)")
+        return ""
+
+    def _build_serve_cmd(
+        self,
+        port: int,
+        lora_modules: list,
+        shared_gpus: bool,
+    ) -> List[str]:
+        """Build the ``vllm serve`` argv for one TP=1 instance.
+
+        Centralises the Qwen3.5-aware flag selection so initial launch and
+        crash-restart paths stay in lockstep.
+        """
+        cmd = [
+            "python", "-m", "vllm.entrypoints.openai.api_server",
+            "--model", self.model_name,
+            "--tensor-parallel-size", "1",
+            "--gpu-memory-utilization", str(self.gpu_util),
+            "--enable-lora", "--max-loras", "5", "--max-lora-rank", "64",
+            "--enable-prefix-caching",
+            "--enable-chunked-prefill",
+            "--max-num-seqs", str(self.max_num_seqs),
+            # batch-level token budget (sum across in-flight requests in
+            # one decode step).  Bumped 16384 → 32768 (v10, 2026-05-04)
+            # to let the engine pack more concurrent rollouts per step
+            # — H200 KV cache headroom is ~10 GB free per instance at
+            # gpu_util=0.9, well above the 32K bump.  This is per-batch,
+            # NOT per-request, so it cannot truncate any single
+            # completion (which is gated by ``max_tokens``).
+            "--max-num-batched-tokens", "32768",
+            "--port", str(port),
+            "--trust-remote-code",
+        ]
+        if self.enforce_eager or shared_gpus:
+            cmd.append("--enforce-eager")
+        if self.language_model_only:
+            # Qwen3.5 / Qwen3-VL: drop the vision encoder for text-only
+            # rollouts.  Frees several GB of weights + activation memory.
+            cmd.append("--language-model-only")
+        if self.reasoning_parser:
+            # Required by Qwen3.5 / Qwen3 to expose the model's <think> /
+            # </think> reasoning blocks via the OpenAI-compatible API.
+            cmd.extend(["--reasoning-parser", self.reasoning_parser])
+        if self._speculative_config_json:
+            cmd.extend(["--speculative_config", self._speculative_config_json])
+        if lora_modules:
+            cmd.extend(["--lora-modules"] + lora_modules)
+        return cmd
+
     def _launch_wave(
         self,
         entries: list,
@@ -198,31 +284,14 @@ class VLLMServerManager:
             env.setdefault("HF_HOME", "/workspace/huggingface")
             env.setdefault("HF_HUB_CACHE",
                            os.path.join(env["HF_HOME"], "hub"))
+            # T2.14: vLLM 0.20+ unconditionally enumerates FP8-eligible layers
+            # during kernel warmup (deep_gemm_warmup) and crashes if the
+            # `deep_gemm` package is missing — even on bf16 / fp16 weights
+            # like Qwen3.5-9B that have no FP8 path.  Disable by default;
+            # callers can re-enable by exporting VLLM_USE_DEEP_GEMM=1.
+            env.setdefault("VLLM_USE_DEEP_GEMM", "0")
 
-            cmd = [
-                "python", "-m", "vllm.entrypoints.openai.api_server",
-                "--model", self.model_name,
-                "--tensor-parallel-size", "1",
-                "--gpu-memory-utilization", str(self.gpu_util),
-                "--enable-lora", "--max-loras", "5", "--max-lora-rank", "64",
-                "--enable-prefix-caching",
-                "--enable-chunked-prefill",
-                "--max-num-seqs", str(self.max_num_seqs),
-                "--max-num-batched-tokens", "16384",
-                "--port", str(port),
-                "--trust-remote-code",
-            ]
-
-            if self.enforce_eager or shared_gpus:
-                cmd.append("--enforce-eager")
-
-            if self._speculative_config_json:
-                cmd.extend([
-                    "--speculative_config", self._speculative_config_json,
-                ])
-
-            if lora_modules:
-                cmd.extend(["--lora-modules"] + lora_modules)
+            cmd = self._build_serve_cmd(port, lora_modules, shared_gpus)
 
             log_fh = None
             if log_dir_path:
@@ -243,9 +312,7 @@ class VLLMServerManager:
             if log_fh:
                 self._log_files.append(log_fh)
 
-        spec_msg = ""
-        if self.speculative_model:
-            spec_msg = f", spec_decode={self.speculative_model} ({self.num_speculative_tokens} tok)"
+        spec_msg = self._spec_log_suffix()
         if lora_modules:
             logger.info(
                 "Started %d vLLM instances (ports %d–%d) with %d LoRA adapters%s",
@@ -458,25 +525,7 @@ class VLLMServerManager:
         env.setdefault("HF_HOME", "/workspace/huggingface")
         env.setdefault("HF_HUB_CACHE", os.path.join(env["HF_HOME"], "hub"))
 
-        cmd = [
-            "python", "-m", "vllm.entrypoints.openai.api_server",
-            "--model", self.model_name,
-            "--tensor-parallel-size", "1",
-            "--gpu-memory-utilization", str(self.gpu_util),
-            "--enable-lora", "--max-loras", "5", "--max-lora-rank", "64",
-            "--enable-prefix-caching",
-            "--enable-chunked-prefill",
-            "--max-num-seqs", str(self.max_num_seqs),
-            "--max-num-batched-tokens", "16384",
-            "--port", str(port),
-            "--trust-remote-code",
-        ]
-        if self.enforce_eager or shared_gpus:
-            cmd.append("--enforce-eager")
-        if self._speculative_config_json:
-            cmd.extend(["--speculative_config", self._speculative_config_json])
-        if lora_modules:
-            cmd.extend(["--lora-modules"] + lora_modules)
+        cmd = self._build_serve_cmd(port, lora_modules, shared_gpus)
 
         log_fh = None
         if log_dir_path:

@@ -4,7 +4,7 @@ Centralized cold-start I/O recording for Qwen+GRPO-connected functions.
 Every LLM-calling function that will be replaced or augmented by Qwen+GRPO
 records its prompt/response through this module.  The collected records
 serve as:
-  1. Supervised fine-tuning data for Qwen3-8B cold-start.
+  1. Supervised fine-tuning data for Qwen/Qwen3.5-9B cold-start.
   2. Reference outputs for GRPO reward comparison.
 
 Usage in any LLM-calling module::

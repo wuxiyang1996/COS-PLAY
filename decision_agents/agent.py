@@ -88,7 +88,7 @@ class VLMDecisionAgent:
     follows the protocol to execute.
     """
 
-    DEFAULT_MODEL = "gpt-4o-mini"
+    DEFAULT_MODEL = "Qwen/Qwen3.5-9B"  # project-wide actor backbone; see common/models.py BACKBONE_MODEL
 
     def __init__(
         self,

@@ -1,0 +1,38 @@
+{
+  "games": [
+    "twenty_forty_eight",
+    "tetris"
+  ],
+  "results": {
+    "twenty_forty_eight": {
+      "n_steps": 150,
+      "same_game_eligible_per_step_hist": {
+        "2": 150
+      },
+      "cross_game_eligible_per_step_hist": {
+        "0": 150
+      },
+      "per_skill_eligibility_count": {
+        "COMMIT__MERGE": 150,
+        "mid:OPTIMIZE": 150
+      }
+    },
+    "tetris": {
+      "n_steps": 127,
+      "same_game_eligible_per_step_hist": {
+        "6": 127
+      },
+      "cross_game_eligible_per_step_hist": {
+        "0": 127
+      },
+      "per_skill_eligibility_count": {
+        "COMMIT__EVADE": 127,
+        "COMMIT__OPTIMIZE": 127,
+        "COMMIT__POSITION": 127,
+        "COMMIT__SETUP": 127,
+        "COMMIT__SURVIVE": 127,
+        "INSPECT__SETUP": 127
+      }
+    }
+  }
+}

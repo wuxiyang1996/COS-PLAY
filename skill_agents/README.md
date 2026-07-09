@@ -1,10 +1,217 @@
-# skill_agents (GRPO Skill Bank Pipeline)
+# skill_agents (GRPO Skill Bank Pipeline) — **LEGACY COS-PLAY TRACK**
+
+> **Status — legacy / reference.** This module is the **COS-PLAY co-evolution
+> Qwen GRPO skill-bank pipeline** retained for reference and for the
+> deferred Qwen3-8B / 32B / 72B tracks. **It is no longer the live
+> skill-agent implementation.** The canonical, plan-driven pipeline now
+> lives at the repo root under [`harness/`](../harness/),
+> [`orchestrator/`](../orchestrator/), [`crafter/`](../crafter/), and the
+> new top-level [`skill_bank/`](../skill_bank/) (split-storage +
+> `SkillLifecycleManager`).  Library defaults now follow the project-wide
+> three-tier stack from [`common/models.py`](../common/models.py): the
+> trained skill-bank backbone is `Qwen/Qwen3.5-9B`
+> (`BACKBONE_MODEL`), the frozen control-plane backbone +
+> LLM-as-judge is `Qwen/Qwen3.5-35B-A3B`
+> (`BACKBONE_TEACHER_MODEL` = `BACKBONE_JUDGE_MODEL` — same weights,
+> two roles), and the SFT cold-start data teacher is `gpt-5.5`
+> (`BACKBONE_SFT_TEACHER_MODEL`). See the
+> top-level [`readme.md`](../readme.md), the plan corpus in
+> [`plans/`](../plans/), and
+> [`IMPLEMENTATION-STATUS.md`](../IMPLEMENTATION-STATUS.md) for the live build.
+>
+> Read this README only if you are working on the deferred Qwen GRPO track
+> (`skill_agents/lora/`, `scripts/qwen3_*.py`, `inference/run_qwen3_8b_eval.py`,
+> `inference/run_academic_benchmarks.py`) or the legacy migration glue
+> scheduled in `skill_bank/legacy_bridge.py`.
+
+---
+
+## The new skill-agent pipeline (where to look instead)
+
+The current build replaces the single GRPO Skill Bank Pipeline described
+below with a four-layer, gate-bound architecture. The same conceptual stages
+(segment → contract → curate → retrieve) still hold, but ownership and
+mechanical invariants are different:
+
+| Concern | Legacy here (COS-PLAY) | **Live build** |
+| --- | --- | --- |
+| Per-invocation skill runtime | implicit in `pipeline.py` | [`harness/`](../harness/) — `SkillHarness`, `AdapterRegistry`, `EligibilityFilter`, `ReplayValidator`, `RewardLogger`, `SkillAdapter` + `adapters/{gymv,browser,osworld,video,visual_reasoning}` |
+| Skill storage + lifecycle | `skill_bank/bank.py` (`SkillBankMVP`, single JSONL) | [`skill_bank/`](../skill_bank/) — split stores (`draft / candidate / active / archive`), `SkillLifecycleManager` (the *only* writer), `SkillRepository`, bank-write isolation invariant |
+| Stage 4 mutations | `bank_maintenance/` propose → CURATOR-LoRA filter → execute | [`crafter/`](../crafter/) — `Composer`, `Generalizer`, `Hypothesizer`, `FailureDiagnoser`, `FailureMemory`, `SkillCrafterService` (proposals are **DRAFT only**; never touches `active_store`) |
+| End-to-end control plane | `extract_skillbank_grpo_gpt54.py` driver script | [`orchestrator/`](../orchestrator/) — `EpisodeRunner`, atomic `ArtifactStore`, `BudgetController`, `GateService` (stages 0–4), `PromotionOrchestrator`, `SnapshotManager` |
+| Promotion control | `min_instances_per_skill` + verification rate | **Unified Skill Gate** — canonical `SkillStatus` (`draft → candidate → shadow → provisional → active`, plus `deprecated / rejected / rolled_back`), six-gate stack `static → replay → shadow → transfer → non-regression`. See [`plans/07-skill-gate/PLAN-UNIFIED-SKILL-GATE.md`](../plans/07-skill-gate/PLAN-UNIFIED-SKILL-GATE.md). |
+| Skill records | `SkillEffectsContract` + `VerificationReport` (effects-only) | `SkillRecord` + `SkillEpisode` + `GateVerdict` + `SkillEvaluationRecord` + `BankMutationProposal` + `FailureTrace` + `RunRelease` in [`data_structure/extensions/`](../data_structure/extensions/) |
+| Backbone model | Qwen3-8B + 3 GRPO LoRA adapters (CONTRACT, CURATOR, SEGMENT) | **`Qwen/Qwen3.5-9B`** for the trained actor + skill-bank adapters (`BACKBONE_MODEL`), **`Qwen/Qwen3.5-35B-A3B`** for both the frozen crafter / harness / orchestrator backbone AND the LLM-as-judge for skill evaluation / promotion gates (`BACKBONE_TEACHER_MODEL` = `BACKBONE_JUDGE_MODEL` — same weights, two roles), and **`gpt-5.5`** for SFT cold-start data labeling only (`BACKBONE_SFT_TEACHER_MODEL`). The Qwen3-VL Phase-F teachers + 32B / 72B tracks remain deferred (overridable via `VLM_AGENT_BACKBONE_*` env vars; e.g. `VLM_AGENT_BACKBONE_JUDGE_MODEL=gpt-5.5` to swap to an off-distribution oracle). |
+
+### Mechanically-enforced invariants the new pipeline adds
+
+These are **not** present in this legacy module; they are enforced by code
+(not reviewer discipline) in the new build, with tests in
+`tests/test_invariants.py`:
+
+1. **G0 evidence-driven** — every successful non-`ACTION` skill must record
+   `evidence_in` / `evidence_out` / `evidence_warrant`. `SkillEpisode.finalize`
+   raises on empty evidence; `SkillLifecycleManager` rejects `ACTIVE`
+   promotion when `expected_evidence_roles` is empty.
+2. **No-memory** — no cross-episode storage. `SkillEpisodeStep.__post_init__`
+   rejects any action type starting with `QUERY_MEM` / `WRITE_MEM`.
+3. **General-protocol** — every `ACTIVE` skill must be feasible in ≥ 2
+   domains (`feasible_domains < 2` is rejected at promotion).
+4. **Bank-write isolation** — only `SkillLifecycleManager` may mutate any
+   skill store; direct `SkillStore.put` / `remove` raises `StoreLockedError`.
+5. **Gate-bound promotion** — `PromotionOrchestrator.promote` rejects `FAIL`
+   verdicts and content-hash drift; refuses `ACTIVE` on `LIMITED_PASS`.
+6. **Crafter scope** — `SkillCrafterService` materialises only `DRAFT`
+   records; static dependency rule keeps `crafter/` from importing
+   `skill_bank/stores`.
+7. **Source-domain / transfer-target asymmetry** — every `ACTIVE` skill must
+   declare ≥ 1 `source_domains` entry (currently `{"gymv"}`) **and** ≥ 1
+   `verified_domains` entry from `{browser, osworld, video, visual_reasoning}`.
+8. **`verified_domains` is gate-owned** — only
+   `SkillLifecycleManager.record_transfer_verification` may mutate
+   `verified_domains` / `adapter_history`, called from
+   `PromotionOrchestrator._record_transfer_verifications` *before* the
+   status transition.
+
+### Bridge from this module into the new pipeline
+
+Two top-level files in this folder act as the bridge into the
+transferable-skill model used by the new pipeline (these are **not** in the
+upstream COS-PLAY repo):
+
+- [`skill_template.py`](skill_template.py) — `TransferableSkill`, `SlotBinding`,
+  `ReasoningProtocol`, `HopStep`, `AbstractPredicate`, `FAMILY_PROTOCOLS`.
+  Defines the domain-agnostic skill representation built around the inner
+  MDP action vocabulary (`GROUND`, `CHECK`, `RETRIEVE`, `CONCLUDE`,
+  `EXECUTE`) and the canonical shared slots (`target`, `blocker`,
+  `constraint`, `candidate_set`, `history_anchor`).
+- [`extract_transferable.py`](extract_transferable.py) — five-stage extractor
+  (predicate normalisation → structural clustering → template abstraction →
+  transferability scoring → export) that mines per-game `SkillBankMVP`
+  banks for cross-domain reusable templates and writes
+  `transferable_skills.jsonl` + `transfer_index.json`.
+
+Migration glue scheduled (per `IMPLEMENTATION-STATUS.md`):
+
+- `skill_bank/legacy_bridge.py` — one-way migration of Stage-3
+  `skill_agents/skill_bank` records into the new `SkillRecord` format.
+- `decision_agents.skill_interface.HarnessSkillProvider` — wraps
+  `SkillHarness.select_eligible_skills` so the legacy COS-PLAY Actor can
+  consume the new harness instead of querying the legacy bank directly.
+
+---
+
+## Overlap with the live build (`orchestrator/` + `skill_bank/` + `crafter/`)
+
+This module *does* perform skill-bank management and skill promotion. So
+does the live build. The two are deliberately overlapping — the live
+build is the successor — but they are **isolated at runtime** and
+cannot interfere with each other. Three points to keep straight:
+
+### 1. The overlap is functional, not behavioural
+
+Each row of the side-by-side table above is one concern that exists in
+both trees. The legacy pipeline owns its own loop end-to-end; the live
+build owns the same loop end-to-end via different files:
+
+| Concern | Legacy (here) | Live build |
+| --- | --- | --- |
+| Skill execution at invocation | `skill_agents/pipeline.py` | `harness/skill_harness.py` |
+| Skill storage | `skill_agents/skill_bank/bank.py::SkillBankMVP` (single JSONL) | `skill_bank/` (split `draft / candidate / active / archive`, `SkillLifecycleManager` as the only writer) |
+| Bank mutations | `skill_agents/bank_maintenance/` (propose → CURATOR-LoRA filter → execute) | `crafter/` (proposals are DRAFT only, never touch `active_store`) |
+| Promotion gating | `min_instances_per_skill` + verification rate, applied directly inside `bank_maintenance/` | `orchestrator/gate_service.py` (canonical `static → replay → shadow → transfer → non-regression` gate stack) + `orchestrator/promotion_orchestrator.py` (transactional promote / rollback) |
+| End-to-end driver | `skill_agents/extract_skillbank/extract_skillbank_grpo_gpt54.py` | `orchestrator/runner.py::EpisodeRunner` |
+
+So `skill_agents/bank_maintenance/` is the conceptual predecessor of
+`crafter/` + `orchestrator.PromotionOrchestrator`, and
+`skill_agents/skill_bank/` is the conceptual predecessor of the new
+top-level `skill_bank/`.
+
+### 2. Why this is not a real conflict today
+
+The live build *never imports* `skill_agents`. The dependency edges go
+only one way:
+
+- `skill_agents` is imported only by the legacy COS-PLAY entrypoints:
+  `decision_agents/` (the legacy Actor), `scripts/qwen3_*.py`,
+  `inference/run_qwen3_8b_eval.py`, `inference/run_inference.py`,
+  `inference/run_diplomacy_discrete_eval.py`,
+  `labeling/extract_skillbank_gpt54.py`. None of these run by default —
+  the library defaults in `common/models.py` pin GPT-4o.
+- The live test suite (`tests/test_smoke.py`,
+  `tests/test_invariants.py`, `tests/test_few_shot_transfer.py`,
+  `tests/test_crafter_repair.py`, `tests/test_backbone_model.py`) does
+  not depend on this module.
+- The two banks share *no records*. `SkillBankMVP` writes its own JSONL
+  with `SkillEffectsContract` + `VerificationReport`; the live
+  `skill_bank/` writes `SkillRecord` / `SkillEpisode` / `GateVerdict` /
+  `SkillEvaluationRecord` from `data_structure/extensions/`. A record
+  from one cannot be loaded by the other.
+- Bank-write isolation in the live build is mechanically enforced —
+  `SkillStore.put` / `remove` raises `StoreLockedError` unless called
+  through `SkillLifecycleManager` (invariant 4 in the root
+  [`readme.md`](../readme.md)). Nothing in `skill_agents/` can promote
+  a record into the live ACTIVE store even if the two trees were wired
+  together by accident.
+
+### 3. The two pieces of glue that *do* cross the boundary
+
+Both bridge *out of* this module into the live build, never the other
+way:
+
+- [`skill_template.py`](skill_template.py) +
+  [`extract_transferable.py`](extract_transferable.py) — the
+  `TransferableSkill` / `SlotBinding` / `ReasoningProtocol` /
+  `HopStep` / `AbstractPredicate` / `FAMILY_PROTOCOLS` types are
+  **already consumed by the live build**, specifically by
+  [`crafter/generalizer.py`](../crafter/generalizer.py). They live
+  under `skill_agents/` for historical reasons but are part of the
+  live transferable-skill substrate (root [`readme.md`](../readme.md)
+  §"Generalizer — proposing transferable templates"). Do not delete
+  them.
+- The two pending bridges (`skill_bank/legacy_bridge.py` and
+  `decision_agents.skill_interface.HarnessSkillProvider`) listed under
+  *Bridge from this module into the new pipeline* above. Until they
+  land, the legacy COS-PLAY Actor + bank stays self-contained, and the
+  live build stays self-contained.
+
+### What to do about the overlap
+
+Three options, in increasing order of effort:
+
+| Option | What it means | When to pick it |
+| --- | --- | --- |
+| **Leave as-is** | Treat `skill_agents/` as deferred Qwen 8B/32B/72B reference. It does not run unless `VLM_AGENT_BACKBONE_MODEL=Qwen/...` is set or a `scripts/qwen3_*` entrypoint is invoked. | Default. The banner at the top of this file already warns readers off it. |
+| **Land the bridges** | Implement `skill_bank/legacy_bridge.py` and `HarnessSkillProvider`. The legacy bank's records become readable as `SkillRecord` in the live flow; the legacy Actor consumes the live harness. | When you actually want to migrate Stage-3 records out of the legacy JSONL or rewire the legacy Actor. Tracked in [`IMPLEMENTATION-STATUS.md`](../IMPLEMENTATION-STATUS.md). |
+| **Delete the overlap** | Move `skill_template.py` + `extract_transferable.py` under `crafter/` (they are already its dependencies), then archive the rest of `skill_agents/` outside the repo or under a `legacy/` namespace. | When the deferred Qwen GRPO tracks are dropped from the project plan altogether. |
+
+For the live pipeline, the short answer to *"is `skill_agents/` still
+performing skill-bank management and promoting skills?"* is **no, not
+into the live build**. The legacy pipeline can still do those things
+inside its own JSONL bank when invoked through a Qwen entrypoint, but
+none of those writes can reach the live `skill_bank/` stores or the
+gate.
+
+---
+
+## Legacy reference (COS-PLAY GRPO Skill Bank Pipeline)
+
+> Everything below describes the **deferred Qwen3-8B GRPO track**. It remains
+> the source of truth for `skill_agents/lora/`, `scripts/qwen3_*.py`,
+> `inference/run_qwen3_8b_eval.py`, and the per-game extraction scripts under
+> `extract_skillbank/`. None of it runs by default — to re-enable, pass
+> `model="Qwen/Qwen3-8B"` explicitly or set `VLM_AGENT_BACKBONE_MODEL`.
 
 Build and maintain a **Skill Bank** from long-horizon game trajectories: segment trajectories into skills, learn symbolic contracts (effects), and serve queries for the [decision_agents](../decision_agents/README.md) VLM agent. The pipeline supports **GRPO-trained LoRA adapters** that wrap existing LLM call points: each call produces G samples, is scored with CPU-only rewards, and the best sample is returned so the EM pipeline runs unchanged while adapters improve over time.
 
-**Model convention:** This project uses **Qwen3-8B** for all skill-bank components (vLLM serving, LoRA adapters, boundary/protocol/contract/curator calls). All configs and code references use Qwen3-8B.
+**Model convention (legacy section):** The deferred GRPO track described
+below uses **Qwen3-8B** for all skill-bank components (vLLM serving, LoRA
+adapters, boundary/protocol/contract/curator calls). All configs and code
+references in this section keep `Qwen3-8B` for back-compat. The live build
+uses **`Qwen/Qwen3.5-9B`** (`BACKBONE_MODEL`) instead — see the banner at
+the top of this file.
 
-**Model-agnostic design:** The pipeline and decision agent use the same skill-bank functions regardless of LLM backend. GPT and Qwen differ only in which API `ask_model` calls; set `PipelineConfig.llm_model` and/or `extractor_model` (e.g. `Qwen/Qwen3-8B` or `gpt-4o-mini`) for protocol synthesis and boundary proposal.
+**Model-agnostic design:** The pipeline and decision agent use the same skill-bank functions regardless of LLM backend. GPT and Qwen differ only in which API `ask_model` calls; set `PipelineConfig.llm_model` and/or `extractor_model` (e.g. `Qwen/Qwen3.5-9B` for the live actor backbone, `Qwen/Qwen3-8B` for the deferred track, or `gpt-5.5-mini` for an SFT-teacher path) for protocol synthesis and boundary proposal.
 
 **Reasoning-model compatibility:** When using Qwen3 or other reasoning models that emit `<think>` blocks, all LLM call sites are wrapped via [`_llm_compat.py`](_llm_compat.py): prompts get `/no_think` appended and responses are stripped of think tags. See [Reasoning-model compatibility](#reasoning-model-compatibility) below.
 
@@ -433,6 +640,46 @@ The `game_name` field in `PipelineConfig` controls which game-specific extractor
 | Candy Crush | 1 skill | 2 skills |
 | Tetris | 4 skills | 4 skills (maintained) |
 
+### Two-vocabulary segmentation (legacy `[CLEAR]` + cross-domain `[COMMIT]`)
+
+The `[TAG]` parser at `boundary_proposal/signal_extractors.py::parse_intention_tag`
+recognises **both** intention vocabularies side-by-side, with no
+config flag or per-corpus switch:
+
+* `SUBGOAL_TAGS` — the legacy 13-token game-tactical alphabet
+  (`SETUP / CLEAR / MERGE / ATTACK / DEFEND / NAVIGATE / POSITION /
+  COLLECT / BUILD / SURVIVE / OPTIMIZE / EXPLORE / EXECUTE`) emitted by
+  `decision_agents.agent_helper.infer_intention` for env_wrappers
+  episodes.
+* `INTENT_OPERATORS` — the new 6-token cross-domain alphabet
+  (`INSPECT / TRACK / COMPARE / COMMIT / VERIFY / RECOVER`) emitted by
+  `labeling/label_intentions_gpt54.py` for gym-v Temporal ROMs and any
+  other corpus where the actor writes free-form English without a
+  `[TAG]` prefix. Future-aligned with the two-MDP inner-hop alphabet
+  (see `decision_agents/README.md`).
+
+Concretely:
+
+* `parse_intention_tag(intention)` returns the canonical token from
+  whichever vocabulary matched (so a 2048 episode produces
+  `"endgame:MERGE"` compound labels while a gym-v episode produces
+  `"opening:COMMIT"` / `"endgame:RECOVER"`); the rest of the pipeline
+  treats them identically.
+* `extract_skillbank_grpo_gpt54.py` accepts both via the union frozenset
+  `_SUBGOAL_TAG_SET = frozenset(SUBGOAL_TAGS) | frozenset(INTENT_OPERATORS)`,
+  so a single skill bank can mix segments tagged in either vocabulary.
+* `labeling/unify_skill_index.py` aggregates over both corpora and
+  records the originating `corpus` (`gym_v` vs `env_wrappers`) on every
+  skill row, so the cross-corpus consumer can filter or rebalance by
+  vocabulary if needed.
+
+Phase × tag compounding still works for either vocabulary
+(`temporal_thirds` is the generic fallback when the corpus lacks a
+game-specific phase extractor — gym-v Temporal ROMs always hit this
+path), so a gym-v skill seed looks like `early:INSPECT`,
+`mid:COMMIT`, `late:RECOVER` and slots into the same decoder
+machinery.
+
 ---
 
 ## Reasoning-model compatibility
@@ -642,15 +889,28 @@ The main pipeline (`extract_skillbank_grpo_gpt54.py`):
 
 ## Subpackage docs
 
+### Legacy (this folder)
+
 - [boundary_proposal/README.md](boundary_proposal/README.md) — Stage 1 signals and `segment_episode` / `propose_from_episode`.
 - [infer_segmentation/README.md](infer_segmentation/README.md) — Stage 2 preference learning and decoders.
 - [infer_segmentation/OVERVIEW.md](infer_segmentation/OVERVIEW.md) — Stage 2 architectural overview.
 - [stage3_mvp/README.md](stage3_mvp/README.md) — Stage 3 effects-only contract learning.
 - [bank_maintenance/README.md](bank_maintenance/README.md) — Stage 4 split/merge/refine.
-- [skill_bank/README.md](skill_bank/README.md) — Persistent storage and NEW pool management.
+- [skill_bank/README.md](skill_bank/README.md) — Legacy persistent storage and NEW pool management (single JSONL `SkillBankMVP`).
 - [skill_evaluation/README.md](skill_evaluation/README.md) — Quality assessment.
 - [lora/README.md](lora/README.md) — Multi-LoRA model (Qwen3-8B + adapters).
 - [PIPELINE_CALL_FLOW.md](PIPELINE_CALL_FLOW.md) — How each function is called from the agent framework.
+
+### New pipeline (top-level packages — preferred)
+
+- [`../harness/README.md`](../harness/README.md) — Per-invocation skill runtime, eligibility filter, adapters, replay validator, reward logger. *Phase A MVP delivered.*
+- [`../orchestrator/README.md`](../orchestrator/README.md) — End-to-end control plane: `EpisodeRunner`, `ArtifactStore`, `BudgetController`, `GateService`, `PromotionOrchestrator`, `SnapshotManager`. *Phase B MVP delivered.*
+- [`../crafter/README.md`](../crafter/README.md) — Slow-timescale typed proposal layer: composer, generalizer, hypothesizer, failure diagnoser, failure memory. Outputs **DRAFT only**. *Phase C MVP delivered.*
+- [`../skill_bank/`](../skill_bank/) — New split-storage skill bank (`draft / candidate / active / archive`) with `SkillLifecycleManager` as the only writer. *Replaces this folder's `skill_bank/bank.py` for the live build.*
+- [`../common/`](../common/) — Canonical enums, ID helpers, `<state>` schema, `BACKBONE_MODEL` registry.
+- [`../data_structure/extensions/`](../data_structure/extensions/) — `SkillEpisode`, `SkillRecord`, `GateVerdict`, `SkillEvaluationRecord`, `BankMutationProposal`, `FailureTrace`, `RunRelease`.
+- [`../plans/README.md`](../plans/README.md) — Full plan corpus (`00-system` … `09-implementation`, plus **`legacy/`** for finished edit passes) that the new pipeline implements.
+- [`../IMPLEMENTATION-STATUS.md`](../IMPLEMENTATION-STATUS.md) — Live delivered/pending tracker per Phase A → F.
 
 ---
 
@@ -658,16 +918,27 @@ The main pipeline (`extract_skillbank_grpo_gpt54.py`):
 
 ```
 skill_agents/
-├── README.md                 # This file
-├── PLAN.md                   # SkillBank Agent operating plan
+├── README.md                 # This file (legacy; new pipeline lives at repo root)
+├── PLAN.md                   # SkillBank Agent operating plan (legacy)
 ├── PIPELINE_CALL_FLOW.md     # How each function is called from the agent framework
-├── __init__.py               # SkillBankAgent, SkillQueryEngine, NewPoolManager, etc.
+├── __init__.py               # SkillBankAgent, SkillQueryEngine, NewPoolManager, TransferableSkill*, etc.
 ├── _llm_compat.py            # Reasoning-model compatibility (strip_think_tags, /no_think wrapper)
+├── _llm_retry.py             # LLM retry wrapper with backoff
 ├── coldstart_io.py           # Centralized cold-start I/O recording for all GRPO-connected functions
 ├── default_predicates.py     # Shared default predicate extractor (no-op fallback)
 ├── pipeline.py               # SkillBankAgent orchestrator (contract feedback, NEW pool, proto-skill flow)
 ├── query.py                  # SkillQueryEngine + SkillSelectionResult (retrieval + selection policy)
 ├── tool_call_reward.py       # Reward for tool calls (agentic RL)
+├── skill_template.py         # BRIDGE → new pipeline: TransferableSkill, SlotBinding,
+│                             # ReasoningProtocol, HopStep, AbstractPredicate, FAMILY_PROTOCOLS.
+│                             # Domain-agnostic skill representation over inner-MDP actions
+│                             # {GROUND, CHECK, RETRIEVE, CONCLUDE, EXECUTE} and shared slots
+│                             # {target, blocker, constraint, candidate_set, history_anchor}.
+├── extract_transferable.py   # BRIDGE → new pipeline: TransferableSkillExtractor,
+│                             # extract_transferable_skills(). Five-stage extractor (predicate
+│                             # normalisation → structural clustering → template abstraction →
+│                             # transferability scoring → export) that mines per-game
+│                             # SkillBankMVP banks for cross-domain reusable templates.
 ├── skill_bank/
 │   ├── bank.py               # SkillBankMVP persistence + compat_fn (Stage 3→2 feedback)
 │   ├── new_pool.py           # NewPoolManager: NEW tracking; ProtoSkillManager staging

@@ -1,0 +1,83 @@
+<state>
+domain=browser
+task=browsergym/miniwob.buy-ticket
+goal=Buy the ticket with the cheapest cost.
+step=0
+
+<entities>
+e1[type=region, label=page, bid=null, pos=0,0,240,315, ontology=navigable_region]
+e2[type=text, label=Duration 19h 39m, bid=null, pos=12,86,95,18, ontology=textual_anchor]
+e3[type=element, label=Book $1167, bid=21, pos=43,105,152,23, ontology=interactive_entity]
+e4[type=text, label=Duration 17h 16m, bid=null, pos=12,137,95,18, ontology=textual_anchor]
+e5[type=element, label=Book $805, bid=29, pos=43,156,152,23, ontology=interactive_entity]
+e6[type=text, label=Duration 13h 8m, bid=null, pos=12,188,88,18, ontology=textual_anchor]
+e7[type=element, label=Book $122, bid=37, pos=43,207,152,23, ontology=interactive_entity]
+e8[type=text, label=Duration 1h 50m, bid=null, pos=12,239,88,18, ontology=textual_anchor]
+e9[type=element, label=Book $126, bid=45, pos=43,258,152,23, ontology=interactive_entity]
+e10[type=region, label=yellow header, bid=null, pos=0,0,240,76, ontology=container_entity]
+</entities>
+
+<attributes>
+e7.state=focused
+e3.value=$1167
+e5.value=$805
+e7.value=$122
+e9.value=$126
+</attributes>
+
+<affordances>
+e3.affords=[focus, inspect, select]
+e5.affords=[focus, inspect, select]
+e7.affords=[focus, inspect, select]
+e9.affords=[focus, inspect, select]
+</affordances>
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e10)
+adjacent(e2,e3)
+adjacent(e4,e5)
+adjacent(e6,e7)
+adjacent(e8,e9)
+grouped(e3,e5,e7)
+grouped(e5,e7,e9)
+</relations>
+
+<state_flags>
+progress=0.8
+phase=late
+scene_type=results_view
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e7
+blocker=null
+constraint=choose lowest price
+candidate_set=[e3,e5,e7,e9]
+history_anchor=e7
+
+<uncertainty>
+e1.pos=low
+e2.pos=medium
+e4.pos=medium
+e6.pos=medium
+e8.pos=medium
+</uncertainty>
+
+<actions>
+a1=noop()
+a2=scroll(0, 300)
+a3=scroll(0, -300)
+a4=go_back()
+a5=go_forward()
+</actions>
+</state>

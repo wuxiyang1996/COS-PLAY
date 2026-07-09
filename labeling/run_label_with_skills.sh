@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run GPT-5.4 episode labeling with skill selection + GRPO cold-start export.
+# Run SFT-teacher (gpt-5.5 by default) episode labeling with skill selection + GRPO cold-start export.
 #
 # Usage:
 #   bash labeling/run_label_with_skills.sh                           # all games
@@ -22,7 +22,7 @@ fi
 BANK_DIR="${ROOT_DIR}/skill_agents/extract_skillbank/output/gpt54_skillbank_grpo"
 
 echo "============================================================"
-echo "  GPT-5.4 Episode Labeling + Skill Selection + GRPO Export"
+echo "  SFT-Teacher (gpt-5.5) Episode Labeling + Skill Selection + GRPO Export"
 echo "  Root:  $ROOT_DIR"
 echo "  Bank:  $BANK_DIR"
 echo "  Args:  $*"

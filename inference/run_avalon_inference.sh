@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Avalon inference with trained Qwen3-8B decision agent
+#  Avalon inference with trained Qwen/Qwen3.5-9B decision agent
 #
 #  Variants:
 #    best    — best checkpoint (self-play, no opponent model)

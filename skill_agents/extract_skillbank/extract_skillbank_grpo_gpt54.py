@@ -96,6 +96,7 @@ from decision_agents.agent_helper import (
     build_rag_summary,
     HARD_SUMMARY_CHAR_LIMIT,
     SUBGOAL_TAGS,
+    INTENT_OPERATORS,
 )
 
 try:
@@ -140,7 +141,7 @@ MODEL_GPT54 = "gpt-5.4"
 DEFAULT_INPUT_DIR = LABELING_DIR / "output" / "gpt54"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output" / "gpt54_skillbank_grpo"
 
-_SUBGOAL_TAG_SET = frozenset(SUBGOAL_TAGS)
+_SUBGOAL_TAG_SET = frozenset(SUBGOAL_TAGS) | frozenset(INTENT_OPERATORS)
 
 
 # ---------------------------------------------------------------------------

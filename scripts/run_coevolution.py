@@ -3,24 +3,28 @@
 
 Usage (from Game-AI-Agent root):
 
-    # 1. Start vLLM server (on GPUs 0-3 with 5 LoRA adapters):
-    python -m vllm.entrypoints.openai.api_server \\
-        --model Qwen/Qwen3-8B \\
-        --tensor-parallel-size 4 \\
-        --gpu-memory-utilization 0.90 \\
-        --enable-lora \\
-        --max-loras 5 \\
-        --max-lora-rank 64 \\
-        --lora-modules \\
-            skill_selection=runs/lora_adapters/decision/skill_selection \\
-            action_taking=runs/lora_adapters/decision/action_taking \\
-            segment=runs/lora_adapters/skillbank/segment \\
-            contract=runs/lora_adapters/skillbank/contract \\
-            curator=runs/lora_adapters/skillbank/curator \\
-        --enable-prefix-caching \\
-        --enable-chunked-prefill \\
-        --max-num-seqs 128 \\
-        --port 8000
+    # 1. Managed mode (default): the orchestrator launches one TP=1
+    #    vLLM-serve instance per --vllm-gpus entry with the right
+    #    Qwen3.5 flags (--language-model-only, --reasoning-parser qwen3,
+    #    --speculative_config '{"method":"mtp","num_speculative_tokens":1}',
+    #    plus all 5 LoRA adapters).  Skip step 1 entirely.
+    #
+    #    External / unmanaged mode:
+    #    python -m vllm.entrypoints.openai.api_server \\
+    #        --model Qwen/Qwen3.5-9B \\
+    #        --tensor-parallel-size 4 \\
+    #        --gpu-memory-utilization 0.90 \\
+    #        --enable-lora --max-loras 5 --max-lora-rank 64 \\
+    #        --language-model-only --reasoning-parser qwen3 \\
+    #        --speculative_config '{"method":"mtp","num_speculative_tokens":1}' \\
+    #        --lora-modules \\
+    #            skill_selection=runs/lora_adapters/decision/skill_selection \\
+    #            action_taking=runs/lora_adapters/decision/action_taking \\
+    #            segment=runs/lora_adapters/skillbank/segment \\
+    #            contract=runs/lora_adapters/skillbank/contract \\
+    #            curator=runs/lora_adapters/skillbank/curator \\
+    #        --enable-prefix-caching --enable-chunked-prefill \\
+    #        --max-num-seqs 128 --port 8000
 
     # 2. Run co-evolution (GRPO on GPUs 4-7):
     export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
@@ -36,7 +40,7 @@ Usage (from Game-AI-Agent root):
 
     # Explicit run directory (otherwise auto-generated from model+timestamp):
     python scripts/run_coevolution.py \\
-        --run-dir runs/Qwen3-8B_20260315_143022
+        --run-dir runs/Qwen3.5-9B_20260427_131800
 
     # Specific games only:
     python scripts/run_coevolution.py \\
@@ -57,7 +61,7 @@ os.environ.setdefault("PYGLET_HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 # HuggingFace cache — point to /workspace/huggingface so models
-# (Qwen3-8B etc.) are not re-downloaded.
+# (Qwen3.5-9B etc.) are not re-downloaded.
 os.environ.setdefault("HF_HOME", "/workspace/huggingface")
 os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 
@@ -68,6 +72,7 @@ os.environ.setdefault("RAG_EMBEDDER_DEVICE", "cpu")
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -109,7 +114,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--games", nargs="+", default=None,
-        help=f"Games to train on (default: {len(SKILL_BANK_GAMES)} skill-bank games; {len(GAME_MAX_STEPS)} total supported)",
+        help=(
+            f"Games to train on (default: full 12-game registry — "
+            f"{len(SKILL_BANK_GAMES)} games covering Phase-1 source + Phase-2 hold-out; "
+            f"{len(GAME_MAX_STEPS)} total supported). "
+            "For Phase-1-only training prefer "
+            "'--games tetris candy_crush gymv_thunder_force_iii gymv_altered_beast "
+            "gymv_columns gymv_dynamite_headdy' or use scripts/run_phase1_curriculum.sh; "
+            "for single-game smoke tests, pass an explicit '--games <slug>'."
+        ),
     )
     parser.add_argument(
         "--curriculum", type=str, default="focused",
@@ -120,7 +133,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--episodes-per-game", type=int, default=8,
-        help="Episodes per game per step (default: 8)",
+        help="Global default episodes per game per step (default: 8). "
+             "Per-game overrides apply on top — see "
+             "trainer.coevolution.config.HIGH_VARIANCE_GYMV_EPISODES "
+             "for sparse-reward gymv games which default to 16. "
+             "Use --episodes-per-game-overrides to customize.",
+    )
+    parser.add_argument(
+        "--episodes-per-game-overrides", type=str, default=None,
+        help="JSON map of per-game episode overrides, e.g. "
+             '\'{"gymv_thunder_force_iii": 24, "tetris": 8}\'. '
+             "Merged on top of the built-in HIGH_VARIANCE_GYMV_EPISODES "
+             "defaults; pass an empty dict '{}' to keep only the "
+             "global --episodes-per-game value across every game.",
     )
     parser.add_argument(
         "--max-concurrent", type=int, default=64,
@@ -135,8 +160,10 @@ def parse_args() -> argparse.Namespace:
 
     # Model
     parser.add_argument(
-        "--model", type=str, default="Qwen/Qwen3-8B",
-        help="Base model name (default: Qwen/Qwen3-8B)",
+        "--model", type=str, default="Qwen/Qwen3.5-9B",
+        help="Base model name (default: Qwen/Qwen3.5-9B). The model that "
+             "vLLM serves AND that GRPO LoRA-tunes. For inference-only "
+             "Qwen3.5-35B-A3B see inference/serve_qwen35_35b_a3b.sh.",
     )
     parser.add_argument(
         "--temperature", type=float, default=0.3,
@@ -177,13 +204,24 @@ def parse_args() -> argparse.Namespace:
         help="GPU memory utilization for vLLM (default: 0.90)",
     )
     parser.add_argument(
-        "--speculative-model", type=str, default="Qwen/Qwen3-0.6B",
-        help="Draft model for speculative decoding (default: Qwen/Qwen3-0.6B). "
-             "Set to empty string to disable.",
+        "--speculative-method", type=str, default="mtp",
+        choices=["mtp", "draft_model", "none"],
+        help="Speculative decoding method (default: mtp). "
+             "'mtp' uses the model's built-in multi-token-prediction head "
+             "(Qwen3.5 / Qwen3-Next / DeepSeek-V3); 'draft_model' uses "
+             "an external small model passed via --speculative-model; "
+             "'none' disables speculative decoding.",
     )
     parser.add_argument(
-        "--num-speculative-tokens", type=int, default=5,
-        help="Number of tokens the draft model proposes per step (default: 5)",
+        "--speculative-model", type=str, default="",
+        help="Draft model for --speculative-method=draft_model "
+             "(e.g. Qwen/Qwen3-0.6B for plain Qwen3). Ignored when "
+             "method=mtp. Default: empty (no external drafter).",
+    )
+    parser.add_argument(
+        "--num-speculative-tokens", type=int, default=1,
+        help="Number of tokens the drafter proposes per step. "
+             "Default: 1 (good for MTP); 4–5 for draft_model.",
     )
 
     # External opponent (Avalon / Diplomacy)
@@ -346,6 +384,309 @@ def parse_args() -> argparse.Namespace:
              "Skills are only copied when the game's bank is empty.",
     )
 
+    # Skill bank storage layout (per_game default, shared opt-in for the
+    # cross-game / lifelong-learning experiments described in
+    # ``training_notes/coevo-3phase-cross-game-ood-transfer-plan.md``).
+    parser.add_argument(
+        "--bank-mode", choices=("per_game", "shared"), default="per_game",
+        help="Skill-bank storage layout. 'per_game' (default, legacy) "
+             "writes one skill_bank.jsonl per game under "
+             "<bank_dir>/<game>/skill_bank.jsonl. 'shared' writes one "
+             "<bank_dir>/skill_bank.jsonl across all games and relies "
+             "on the harness's task-axis veto (feasible_tasks, "
+             "harness/README §22) for per-game eligibility. Pair "
+             "'shared' with --seed-bank-dir and the per-phase "
+             "translation step in scripts/run_phase1_curriculum.sh.",
+    )
+
+    # Phase B′: Crafter + Promotion (one-way writeback to legacy bank)
+    parser.add_argument(
+        "--crafter-promotion-enabled", action="store_true",
+        help="Enable Phase B′: per-step Crafter (reflect on episodes → "
+             "BankMutationProposals) + offline-synthetic Promotion driver "
+             "(decide_promotion_gpt54.py) that writes promoted skills back "
+             "into the live skill_bank.jsonl. Off by default. See "
+             "implementation_notes/legacy/harness-usability-and-intra-gymv-transfer.md.",
+    )
+    parser.add_argument(
+        "--crafter-cycle-every-k-steps", type=int, default=0,
+        help="If >0, only run the Crafter every K steps "
+             "(otherwise: every step). Default 0 = every step.",
+    )
+    parser.add_argument(
+        "--crafter-outcome-failure-threshold", type=float, default=0.0,
+        help="Per-episode reward below this threshold is treated as "
+             "OUTCOME_FAILURE for Crafter failure synthesis. Default 0.0.",
+    )
+    parser.add_argument(
+        "--crafter-promotion-timeout-s", type=float, default=300.0,
+        help="Subprocess timeout for the offline-synthetic promotion "
+             "driver (decide_promotion_gpt54.py). Default 300s.",
+    )
+    parser.add_argument(
+        "--crafter-promotion-gate-mode",
+        choices=["offline-synthetic", "offline-with-llm-judge", "live"],
+        default="offline-synthetic",
+        help="Forwarded to decide_promotion_gpt54.py --gate-mode. "
+             "'offline-synthetic' (default): no LLM calls, all proposals "
+             "land at LIMITED_PASS ⇒ PROVISIONAL. "
+             "'offline-with-llm-judge': adds one BACKBONE_JUDGE_MODEL "
+             "(35B-A3B) call per proposal so visibly bad proposals can "
+             "be FAILed and rejected — routed via VLLM_BASE_URL_MAP. "
+             "'live': calls GateService.evaluate end-to-end (diagnostic).",
+    )
+    # Hypothesizer fallthrough gate (post-v11 audit).  Both gates default
+    # to active; lower these knobs if a workload genuinely benefits from
+    # more aggressive new-skill minting.  See CoEvolutionConfig docstring
+    # for the full rationale.
+    parser.add_argument(
+        "--crafter-hypothesize-min-recurrences", type=int, default=3,
+        help="Minimum FailureMemory recurrence count before the Crafter "
+             "dispatch chain falls through to the Hypothesizer "
+             "(default 3 — same as hot_pattern_threshold).  Set to 1 "
+             "to reproduce the pre-v11 behaviour where any single "
+             "orphan failure could mint a new skill.",
+    )
+    parser.add_argument(
+        "--crafter-hypothesize-related-skill-jaccard", type=float, default=0.30,
+        help="Jaccard threshold (0..1) above which an existing bank "
+             "skill is judged 'related' to the failure context, "
+             "blocking the Hypothesizer fallthrough (so Patch is "
+             "preferred). Default 0.30. Set to 0.0 to disable the "
+             "relatedness gate (recurrence gate stays).",
+    )
+
+    # Harness wire-up (Day-10): hook the harness's eligibility +
+    # validate_invocation surfaces into Phase A, and drain the rejection
+    # sink into Phase B′ Crafter. See harness/README.md §22.
+    parser.add_argument(
+        "--harness-enabled", action="store_true",
+        help="Enable Phase-A harness integration: pre-LLM "
+             "select_eligible_skills filter + post-LLM "
+             "validate_invocation veto, with rejection sink drained "
+             "into the Crafter hook's lifecycle. Adds 0 LLM calls. "
+             "Off by default. See harness/README.md §22.",
+    )
+    parser.add_argument(
+        "--no-harness-allow-shadow", dest="harness_allow_shadow",
+        action="store_false",
+        help="Refuse to admit SHADOW skills via the harness eligibility "
+             "filter. Default: SHADOW skills are admitted (matches "
+             "HarnessConfig.allow_shadow=True).",
+    )
+    parser.set_defaults(harness_allow_shadow=True)
+
+    # ── Block B — §5.5 ablation flags ──────────────────────────────────
+    # Each flag is independently switchable; default values reproduce
+    # the production SkillBridge behaviour.  Combine them to reproduce
+    # the §5.5 ablation table without rebuilding the trainer image.
+    parser.add_argument(
+        "--harness-mode",
+        choices=["full", "plain-text-skills", "off"],
+        default="full",
+        help="Block B1: harness ablation. 'full' (default) keeps "
+             "eligibility filter + validate_invocation. "
+             "'plain-text-skills' bypasses both — actor sees raw "
+             "skill bank content as plain-text few-shot. 'off' "
+             "drops candidates entirely (cold-start mode). Only "
+             "consulted when --harness-enabled is set.",
+    )
+    parser.add_argument(
+        "--no-crafter", dest="crafter_enabled", action="store_false",
+        help="Block B2: w/o crafter ablation. Skips the Crafter step "
+             "entirely (no patches, no LLM crafter, no hypotheses, "
+             "no retire). Promotion + lifecycle still run on top of "
+             "any pre-existing draft skills.",
+    )
+    parser.set_defaults(crafter_enabled=True)
+    parser.add_argument(
+        "--promotion-bypass-mode",
+        choices=["gated", "permissive"],
+        default="gated",
+        help="Block B3: promotion gate ablation. 'gated' (default) "
+             "routes through the GateService driver. 'permissive' "
+             "auto-PASSes every proposal (DRAFT → ACTIVE) with no "
+             "judge call, isolating the gate's contribution.",
+    )
+    parser.add_argument(
+        "--intention-trigger",
+        choices=["every-step", "sharp-shift", "disabled"],
+        default="every-step",
+        help="Block B4: intention loop ablation. 'every-step' "
+             "(default, historical) regenerates intention LLM every "
+             "inner step. 'sharp-shift' fires only on detected state "
+             "delta or urgency. 'disabled' generates once at step 0 "
+             "and reuses for the rest of the episode.",
+    )
+    parser.add_argument(
+        "--actor-bank-cap-k", type=int, default=0,
+        help="Block B5: cap the actor's view of the bank at top-K "
+             "skills (0 = no cap, historical default). Used for the "
+             "bank-size sweep K ∈ {10, 50, 200}. Implemented as a "
+             "retrieval-side filter on SkillQueryEngine.select(); "
+             "does not truncate the on-disk bank file.",
+    )
+
+    # Phase-start GameProfile (Path 1).  When enabled, the orchestrator
+    # fires one BACKBONE_JUDGE_MODEL (35B) call per game per phase
+    # boundary, parses a compact GameProfile + <state> exemplar, and
+    # prepends the compact profile to the actor's SYSTEM_PROMPT and
+    # SKILL_SELECTION_SYSTEM_PROMPT for the duration of the phase.
+    # See trainer/coevolution/_game_schema.py.
+    parser.add_argument(
+        "--game-schema-enabled", action="store_true",
+        help="Enable phase-start GameProfile generation (Path 1): "
+             "1 × BACKBONE_JUDGE_MODEL (35B) call per game per phase "
+             "produces a compact goal/win_signal/hazards/key_actions/"
+             "failure_modes profile that gets injected into the "
+             "actor's SYSTEM_PROMPT, plus a cached <state> exemplar "
+             "for Path 2 / Path 4 to reuse. Off by default.",
+    )
+    parser.add_argument(
+        "--game-schema-model", type=str, default="",
+        help="Override model for game-schema 35B calls. Empty (default) "
+             "→ BACKBONE_JUDGE_MODEL via VLLM_BASE_URL_MAP (same routing "
+             "as the LLM promotion judge).",
+    )
+    parser.add_argument(
+        "--game-schema-max-tokens", type=int, default=1024,
+        help="Token budget for the 35B GameProfile response (default "
+             "1024 — fits compact + <state> exemplar comfortably).",
+    )
+    parser.add_argument(
+        "--game-schema-timeout-s", type=float, default=60.0,
+        help="Hard timeout per 35B GameProfile call. On timeout we "
+             "fall back to a deterministic minimum profile and "
+             "continue without blocking the phase boundary.",
+    )
+
+    # Path 2 — supplemental LLM Crafter (35B-A3B teacher).
+    parser.add_argument(
+        "--llm-crafter-enabled", action="store_true",
+        help="Enable Path 2 LLM Crafter: in addition to the rule-based "
+             "Crafter, fire up to --llm-crafter-k-max parallel 35B "
+             "calls per game per step (one per FailureTrace) to "
+             "propose patch / hypothesize / retire BankMutationProposals. "
+             "Routes through API_func.ask_model → BACKBONE_JUDGE_MODEL "
+             "via VLLM_BASE_URL_MAP. Off by default.",
+    )
+    parser.add_argument(
+        "--llm-crafter-model", type=str, default="",
+        help="Override model for LLM Crafter 35B calls. Empty (default) "
+             "→ BACKBONE_JUDGE_MODEL via VLLM_BASE_URL_MAP.",
+    )
+    parser.add_argument(
+        "--llm-crafter-k-max", type=int, default=2,
+        help="Hard cap on parallel LLM Crafter calls per game per step "
+             "(default 2 post-v11; was 5 in v11 but the rewritten "
+             "last-resort prompt + recurrence/relatedness gates make a "
+             "smaller cap sufficient).",
+    )
+    parser.add_argument(
+        "--llm-crafter-max-tokens", type=int, default=1024,
+        help="Token budget per LLM Crafter response (default 1024).",
+    )
+    parser.add_argument(
+        "--llm-crafter-temperature", type=float, default=0.3,
+        help="Sampling temperature for LLM Crafter calls (default 0.3).",
+    )
+    parser.add_argument(
+        "--llm-crafter-timeout-s", type=float, default=60.0,
+        help="Hard timeout per LLM Crafter call. On timeout the trace "
+             "is dropped and the deterministic proposal stream continues.",
+    )
+    parser.add_argument(
+        "--llm-crafter-enable-thinking", action="store_true",
+        help="Stage 2 (cross-domain adaptation) opt-in: forward "
+             "enable_thinking=True into the 35B Crafter ask_model "
+             "calls so Qwen3-A3B emits its <think> chain-of-thought "
+             "before the JSON proposal. EXPERIMENTAL — observed "
+             "Crafter prompts to consume >16K tokens of reasoning "
+             "without emitting a final answer; you should pair this "
+             "with --llm-crafter-max-tokens 16384+ AND a prompt-side "
+             "'think briefly' constraint. --llm-crafter-timeout-s "
+             "should also rise to >=180 s. Stage-1 in-domain "
+             "training (run_phase1_curriculum.sh) keeps this OFF.",
+    )
+
+    # Path 3 — Promotion judge (35B-A3B teacher; only fires when
+    # ``--crafter-promotion-gate-mode offline-with-llm-judge``).
+    parser.add_argument(
+        "--crafter-promotion-judge-enable-thinking",
+        action="store_true",
+        help="Stage 2 cross-domain opt-in for the LLM judge inside "
+             "decide_promotion_gpt54.py. Forwards --enable-thinking "
+             "to the driver, which threads through to "
+             "_llm_skill_judge.judge_proposal's ask_model call. Pair "
+             "with --crafter-promotion-judge-max-tokens 8192+ — "
+             "live 35B-A3B observed to spend ~5K tokens on the "
+             "<think> block before emitting the ~120-char JSON "
+             "verdict; 4K truncates, 8K+ completes in ~25-40 s. "
+             "No effect for any other gate mode (the driver simply "
+             "ignores the flag).",
+    )
+    parser.add_argument(
+        "--crafter-promotion-judge-max-tokens", type=int, default=256,
+        help="Token budget per llm-judge response. Default 256 fits a "
+             "tight JSON verdict; bump to 8192+ when --crafter-"
+             "promotion-judge-enable-thinking is set (observed 5K-"
+             "token <think> blocks before content emission).",
+    )
+
+    # Path 4 — LLM Harness validator (35B-A3B teacher).
+    parser.add_argument(
+        "--llm-harness-validator-enabled", action="store_true",
+        help="Enable Path 4 LLM Harness validator: after the "
+             "deterministic SkillHarness.validate_invocation admits a "
+             "skill, optionally run a 35B post-validation pass. Hybrid "
+             "policy: bootstrap window (--llm-harness-bootstrap-steps) "
+             "always fires; afterwards only fires on uncertain cases "
+             "(SHADOW status, no can_handle evidence, translation-"
+             "rewritten contracts). Verdicts can ONE-WAY downgrade "
+             "admit→veto. Off by default.",
+    )
+    parser.add_argument(
+        "--llm-harness-model", type=str, default="",
+        help="Override model for LLM Harness validator. Empty (default) "
+             "→ BACKBONE_JUDGE_MODEL via VLLM_BASE_URL_MAP.",
+    )
+    parser.add_argument(
+        "--llm-harness-bootstrap-steps", type=int, default=20,
+        help="Trainer steps below this fire the LLM validator on EVERY "
+             "admitted skill regardless of deterministic certainty "
+             "(default 20).",
+    )
+    parser.add_argument(
+        "--llm-harness-max-tokens", type=int, default=256,
+        help="Token budget per LLM Harness validator response "
+             "(default 256).",
+    )
+    parser.add_argument(
+        "--llm-harness-temperature", type=float, default=0.2,
+        help="Sampling temperature for LLM Harness validator calls "
+             "(default 0.2).",
+    )
+    parser.add_argument(
+        "--llm-harness-timeout-s", type=float, default=30.0,
+        help="Hard timeout per LLM Harness validator call. On timeout "
+             "the deterministic verdict (admit) stands.",
+    )
+
+    # Lane-(a) feature flag (T1.3a): the live trainer Crafter never mints
+    # PatchProposals by default — see implementation_notes/legacy/skill-lane-decision.md.
+    # The dispatcher's existing `_STATUS_NO_OP` → Hypothesizer fall-through
+    # carries the failure signal through. Set this only for explicit
+    # lane-(b) experiments.
+    parser.add_argument(
+        "--enable-protocol-patching", dest="crafter_enable_protocol_patching",
+        action="store_true",
+        help="Lane-(b) override: enable the Crafter Repairer / "
+             "PatchProposal mint path in the live trainer. Off by "
+             "default per the lane-(a) decision (skills are retrieval "
+             "payloads). See implementation_notes/legacy/skill-lane-decision.md.",
+    )
+    parser.set_defaults(crafter_enable_protocol_patching=False)
+
     # Debug
     parser.add_argument(
         "--debug-io", action="store_true",
@@ -419,6 +760,8 @@ def main() -> None:
         vllm_base_url=args.vllm_url,
         vllm_base_port=args.vllm_base_port,
         vllm_gpu_util=args.vllm_gpu_util,
+        speculative_method=("none" if args.speculative_method == "none"
+                            else args.speculative_method),
         speculative_model=args.speculative_model or None,
         num_speculative_tokens=args.num_speculative_tokens,
         model_name=args.model,
@@ -462,10 +805,35 @@ def main() -> None:
     if args.min_steps_before_stuck is not None:
         config_kwargs["min_steps_before_stuck_check"] = args.min_steps_before_stuck
 
+    # ── Per-game episode overrides ──────────────────────────────────
+    # Layered precedence: HIGH_VARIANCE_GYMV_EPISODES (built-in default
+    # via dataclass factory) → unified-roles flat override → explicit
+    # --episodes-per-game-overrides JSON.  We resolve here so the
+    # final dict is what reaches CoEvolutionConfig.
+    from trainer.coevolution.config import (
+        EPISODES_PER_GAME_MULTIROLE as _EPS_MULTIROLE,
+        HIGH_VARIANCE_GYMV_EPISODES as _EPS_HIGH_VAR,
+    )
+    eps_overrides: Dict[str, int] = {**_EPS_MULTIROLE, **_EPS_HIGH_VAR}
     if args.unified_roles:
-        config_kwargs["episodes_per_game_overrides"] = {
-            g: args.episodes_per_game for g in games
-        }
+        eps_overrides = {g: args.episodes_per_game for g in games}
+    if args.episodes_per_game_overrides is not None:
+        try:
+            cli_overrides = json.loads(args.episodes_per_game_overrides)
+            if not isinstance(cli_overrides, dict):
+                raise ValueError(
+                    "--episodes-per-game-overrides must be a JSON object"
+                )
+            eps_overrides = {**eps_overrides, **{
+                str(k): int(v) for k, v in cli_overrides.items()
+            }}
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise SystemExit(
+                f"Invalid --episodes-per-game-overrides JSON: {exc}\n"
+                f"Got: {args.episodes_per_game_overrides!r}"
+            )
+    if eps_overrides:
+        config_kwargs["episodes_per_game_overrides"] = eps_overrides
 
     if args.opponent_model is not None:
         config_kwargs["opponent_model"] = args.opponent_model
@@ -474,6 +842,103 @@ def main() -> None:
 
     if args.seed_bank_dir is not None:
         config_kwargs["seed_bank_dir"] = args.seed_bank_dir
+
+    if args.bank_mode is not None:
+        config_kwargs["bank_mode"] = args.bank_mode
+
+    if args.crafter_promotion_enabled:
+        config_kwargs["crafter_promotion_enabled"] = True
+    if args.crafter_cycle_every_k_steps:
+        config_kwargs["crafter_cycle_every_k_steps"] = args.crafter_cycle_every_k_steps
+    if args.crafter_outcome_failure_threshold != 0.0:
+        config_kwargs["crafter_outcome_failure_threshold"] = (
+            args.crafter_outcome_failure_threshold
+        )
+    if args.crafter_promotion_timeout_s != 300.0:
+        config_kwargs["crafter_promotion_timeout_s"] = args.crafter_promotion_timeout_s
+    if args.crafter_promotion_gate_mode != "offline-synthetic":
+        config_kwargs["crafter_promotion_gate_mode"] = args.crafter_promotion_gate_mode
+    # Hypothesizer fallthrough gate (post-v11 audit) — only emit when
+    # the user explicitly diverges from the defaults so older smoke
+    # tests that snapshot config_kwargs aren't tripped by a noisy
+    # additive field.
+    if args.crafter_hypothesize_min_recurrences != 3:
+        config_kwargs["crafter_hypothesize_min_recurrences"] = (
+            args.crafter_hypothesize_min_recurrences
+        )
+    if args.crafter_hypothesize_related_skill_jaccard != 0.30:
+        config_kwargs["crafter_hypothesize_related_skill_jaccard"] = (
+            args.crafter_hypothesize_related_skill_jaccard
+        )
+
+    if args.harness_enabled:
+        config_kwargs["harness_enabled"] = True
+    if not args.harness_allow_shadow:
+        config_kwargs["harness_allow_shadow"] = False
+    if args.crafter_enable_protocol_patching:
+        config_kwargs["crafter_enable_protocol_patching"] = True
+
+    # ── Block B — §5.5 ablation flags wire-up ─────────────────────────
+    if args.harness_mode != "full":
+        config_kwargs["harness_mode"] = args.harness_mode
+    if not args.crafter_enabled:
+        config_kwargs["crafter_enabled"] = False
+    if args.promotion_bypass_mode != "gated":
+        config_kwargs["promotion_bypass_mode"] = args.promotion_bypass_mode
+    if args.intention_trigger != "every-step":
+        config_kwargs["intention_trigger"] = args.intention_trigger
+    if args.actor_bank_cap_k > 0:
+        config_kwargs["actor_bank_cap_k"] = int(args.actor_bank_cap_k)
+
+    if args.game_schema_enabled:
+        config_kwargs["game_schema_enabled"] = True
+    if args.game_schema_model:
+        config_kwargs["game_schema_model"] = args.game_schema_model
+    if args.game_schema_max_tokens != 1024:
+        config_kwargs["game_schema_max_tokens"] = args.game_schema_max_tokens
+    if args.game_schema_timeout_s != 60.0:
+        config_kwargs["game_schema_timeout_s"] = args.game_schema_timeout_s
+
+    # Path 2 — supplemental LLM Crafter (35B-A3B teacher).
+    if args.llm_crafter_enabled:
+        config_kwargs["llm_crafter_enabled"] = True
+    if args.llm_crafter_model:
+        config_kwargs["llm_crafter_model"] = args.llm_crafter_model
+    if args.llm_crafter_k_max != 2:
+        config_kwargs["llm_crafter_k_max"] = args.llm_crafter_k_max
+    if args.llm_crafter_max_tokens != 1024:
+        config_kwargs["llm_crafter_max_tokens"] = args.llm_crafter_max_tokens
+    if args.llm_crafter_temperature != 0.3:
+        config_kwargs["llm_crafter_temperature"] = args.llm_crafter_temperature
+    if args.llm_crafter_timeout_s != 60.0:
+        config_kwargs["llm_crafter_timeout_s"] = args.llm_crafter_timeout_s
+    # Stage 2 cross-domain opt-in for Path 2.
+    if args.llm_crafter_enable_thinking:
+        config_kwargs["llm_crafter_enable_thinking"] = True
+
+    # Path 3 — Promotion judge (Stage 2 cross-domain only).
+    if args.crafter_promotion_judge_enable_thinking:
+        config_kwargs[
+            "crafter_promotion_judge_enable_thinking"
+        ] = True
+    if args.crafter_promotion_judge_max_tokens != 256:
+        config_kwargs[
+            "crafter_promotion_judge_max_tokens"
+        ] = args.crafter_promotion_judge_max_tokens
+
+    # Path 4 — LLM Harness validator (35B-A3B teacher).
+    if args.llm_harness_validator_enabled:
+        config_kwargs["llm_harness_validator_enabled"] = True
+    if args.llm_harness_model:
+        config_kwargs["llm_harness_model"] = args.llm_harness_model
+    if args.llm_harness_bootstrap_steps != 20:
+        config_kwargs["llm_harness_bootstrap_steps"] = args.llm_harness_bootstrap_steps
+    if args.llm_harness_max_tokens != 256:
+        config_kwargs["llm_harness_max_tokens"] = args.llm_harness_max_tokens
+    if args.llm_harness_temperature != 0.2:
+        config_kwargs["llm_harness_temperature"] = args.llm_harness_temperature
+    if args.llm_harness_timeout_s != 30.0:
+        config_kwargs["llm_harness_timeout_s"] = args.llm_harness_timeout_s
 
     if args.run_dir is not None:
         config_kwargs["run_dir"] = args.run_dir
@@ -524,6 +989,62 @@ def main() -> None:
     print(f"  TensorBoard:  {config.tensorboard_dir}")
     print(f"  Log dir:      {config.log_dir}")
     print(f"  W&B:          {'enabled' if config.wandb_enabled else 'disabled'}")
+    if config.crafter_promotion_enabled:
+        every = (config.crafter_cycle_every_k_steps
+                 if config.crafter_cycle_every_k_steps > 0 else 1)
+        print(f"  Crafter+Prom: enabled (every {every} step(s), "
+              f"fail<{config.crafter_outcome_failure_threshold:.2f}, "
+              f"timeout {config.crafter_promotion_timeout_s:.0f}s)")
+    else:
+        print("  Crafter+Prom: disabled")
+    if config.harness_enabled:
+        print(f"  Harness:      enabled (allow_shadow={config.harness_allow_shadow})")
+    else:
+        print("  Harness:      disabled")
+    if config.game_schema_enabled:
+        _gsm = config.game_schema_model or "BACKBONE_JUDGE_MODEL (env)"
+        print(
+            f"  GameProfile:  enabled (1×35B/game/phase via {_gsm}, "
+            f"max_tokens={config.game_schema_max_tokens}, "
+            f"timeout={config.game_schema_timeout_s:.0f}s)"
+        )
+    else:
+        print("  GameProfile:  disabled")
+    if getattr(config, "llm_crafter_enabled", False):
+        _lcm = config.llm_crafter_model or "BACKBONE_JUDGE_MODEL (env)"
+        _lc_think = (
+            "  thinking=ON (Stage-2 cross-domain)"
+            if getattr(config, "llm_crafter_enable_thinking", False)
+            else "  thinking=OFF (Stage-1 in-domain)"
+        )
+        print(
+            f"  LLM Crafter:  enabled (≤{config.llm_crafter_k_max} parallel "
+            f"35B/game/step via {_lcm}, "
+            f"max_tokens={config.llm_crafter_max_tokens}, "
+            f"timeout={config.llm_crafter_timeout_s:.0f}s){_lc_think}"
+        )
+    else:
+        print("  LLM Crafter:  disabled")
+    if getattr(config, "crafter_promotion_judge_enable_thinking", False):
+        print(
+            f"  Promo Judge:  thinking=ON (Stage-2 cross-domain) "
+            f"max_tokens={config.crafter_promotion_judge_max_tokens}"
+        )
+    if getattr(config, "llm_harness_validator_enabled", False):
+        _lhm = config.llm_harness_model or "BACKBONE_JUDGE_MODEL (env)"
+        print(
+            f"  LLM Harness:  enabled (bootstrap<{config.llm_harness_bootstrap_steps} "
+            f"steps via {_lhm}, "
+            f"max_tokens={config.llm_harness_max_tokens}, "
+            f"timeout={config.llm_harness_timeout_s:.0f}s)"
+        )
+    else:
+        print("  LLM Harness:  disabled")
+    if config.crafter_enable_protocol_patching:
+        print("  Repairer:     ENABLED (lane-(b) — protocol patching live)")
+    else:
+        print("  Repairer:     parked (lane-(a) — patches gated off; "
+              "Hypothesizer carries failure signal)")
     print(f"  Debug I/O:    {'enabled → ' + config.debug_io_dir if config.debug_io else 'disabled'}")
     print(f"  Curriculum:   {config.curriculum_description()}")
     if config.start_mode == "from_scratch":

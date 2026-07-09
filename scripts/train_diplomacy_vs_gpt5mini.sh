@@ -11,7 +11,7 @@
 # Prerequisites:
 #   - 8 GPUs (0-3 for vLLM inference, 4-7 for GRPO training)
 #   - OPENROUTER_API_KEY env var set (see .env.example)
-#   - Qwen/Qwen3-8B model weights in /workspace/huggingface/
+#   - Qwen/Qwen3.5-9B model weights in /workspace/huggingface/
 #
 # Usage:
 #   cd /workspace/game_agent/Game-AI-Agent
@@ -36,7 +36,7 @@ SFT_DIR="${ROOT_DIR}/runs/sft_coldstart"
 echo "============================================================"
 echo "  DIPLOMACY TRAINING — gpt-5-mini opponent"
 echo "============================================================"
-echo "  Model:      Qwen/Qwen3-8B"
+echo "  Model:      Qwen/Qwen3.5-9B"
 echo "  Opponent:   gpt-5-mini (OpenRouter)"
 echo "  Steps:      35"
 echo "  Episodes:   28 per step (unified roles, all 7 powers)"
@@ -51,7 +51,7 @@ python scripts/run_coevolution.py \
     --total-steps 35 \
     --episodes-per-game 28 \
     --unified-roles \
-    --model "Qwen/Qwen3-8B" \
+    --model "Qwen/Qwen3.5-9B" \
     --temperature 0.3 \
     --opponent-model "gpt-5-mini" \
     --opponent-api-base "https://openrouter.ai/api/v1" \

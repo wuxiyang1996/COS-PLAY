@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run GPT-5.4 episode labeling from the Game-AI-Agent root.
+# Run SFT-teacher (gpt-5.5 by default) episode labeling from the Game-AI-Agent root.
 #
 # Usage:
 #   bash labeling/run_labeling.sh                           # all games
@@ -22,7 +22,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
 fi
 
 echo "============================================================"
-echo "  GPT-5.4 Episode Labeling"
+echo "  SFT-Teacher (gpt-5.5) Episode Labeling"
 echo "  Root: $ROOT_DIR"
 echo "  Args: $*"
 echo "============================================================"

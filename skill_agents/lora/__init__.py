@@ -1,7 +1,7 @@
 """
 Multi-LoRA infrastructure for the skill-bank agent (GRPO edition).
 
-One shared Qwen3-8B backbone + 3 GRPO-trained LoRA adapters
+One shared Qwen/Qwen3.5-9B backbone + 3 GRPO-trained LoRA adapters
 (segment, contract, curator).  BOUNDARY and RETRIEVAL enum values
 are retained for backward compatibility but are not GRPO-trained.
 

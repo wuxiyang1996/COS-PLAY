@@ -18,9 +18,6 @@ from trainer.coevolution.config import (
     CoEvolutionConfig,
     GAME_DURATION_ORDER,
     GAME_MAX_STEPS,
-    AVALON_ROLES,
-    AVALON_SIDES,
-    DIPLOMACY_POWERS,
     resolve_bank_key,
 )
 from trainer.coevolution.episode_runner import EpisodeResult, run_episode_async
@@ -104,9 +101,18 @@ def build_lpt_schedule(
     the entire collection window (enabling cross-system overlap with the
     skill bank pipeline).
 
-    When *unified_role_rollouts* is ``True``, Avalon and Diplomacy episodes
-    cycle through roles deterministically so each rollout covers a
-    different role / power.
+    Per-game ``episodes_per_game_overrides`` are honored in BOTH modes:
+      * Unified-role mode — covers role-coverage fan-out (Avalon /
+        Diplomacy).
+      * Standard per-game mode — covers high-variance sparse-reward
+        games (gymv shooters / brawlers, see
+        :data:`HIGH_VARIANCE_GYMV_EPISODES`) where the default n=8
+        is small enough that ``mean_reward`` is dominated by sampling
+        noise rather than actual policy quality.
+
+    The ``unified_role_rollouts`` flag is preserved for callers that
+    still pass it for documentation but no longer gates override
+    application.
     """
     overrides = episodes_per_game_overrides or {}
     sorted_games = sorted(
@@ -122,7 +128,7 @@ def build_lpt_schedule(
     for g in sorted_games:
         ms = GAME_MAX_STEPS.get(g, 200)
         est = ms * PER_STEP_S
-        n_eps = overrides.get(g, episodes_per_game) if unified_role_rollouts else episodes_per_game
+        n_eps = overrides.get(g, episodes_per_game)
 
         specs: List[EpisodeSpec] = []
         for i in range(n_eps):
@@ -130,13 +136,6 @@ def build_lpt_schedule(
                 game=g, max_steps=ms, episode_idx=i,
                 estimated_duration_s=est,
             )
-            if unified_role_rollouts:
-                if g == "avalon":
-                    spec.assigned_role_index = i % len(AVALON_ROLES)
-                    spec.assigned_role = AVALON_ROLES[spec.assigned_role_index]
-                elif g == "diplomacy":
-                    spec.assigned_role_index = i % len(DIPLOMACY_POWERS)
-                    spec.assigned_role = DIPLOMACY_POWERS[spec.assigned_role_index]
             specs.append(spec)
 
         buckets[g] = specs
@@ -159,6 +158,9 @@ async def collect_rollouts(
     *,
     on_episode_done: Optional[Callable[[EpisodeResult], None]] = None,
     thread_executor: Optional[ThreadPoolExecutor] = None,
+    harness_hooks: Optional[Dict[str, Any]] = None,
+    reward_logger: Any = None,
+    game_profiles: Optional[Dict[str, Any]] = None,
 ) -> List[EpisodeResult]:
     """Collect rollouts for all games with LPT scheduling and concurrency cap.
 
@@ -173,6 +175,14 @@ async def collect_rollouts(
         Called (synchronously) each time an episode finishes.  Used by the
         orchestrator to feed completed trajectories into the skill bank
         pipeline concurrently (cross-system overlap, Strategy E).
+    harness_hooks : dict | None
+        Per-game :class:`trainer.coevolution._harness_hook.SkillHarnessHook`
+        instances.  When supplied, the matching hook is threaded through
+        :func:`run_episode_async` so the harness's eligibility +
+        ``validate_invocation`` surfaces fire inside each rollout (PLAN-
+        HARNESS §5.2 + PLAN-UNIFIED §3.4).  ``None`` (or an empty dict)
+        disables harness integration — same behaviour as before this
+        kwarg landed.
     """
     _unified = getattr(config, "unified_role_rollouts", False)
     _overrides = getattr(config, "episodes_per_game_overrides", {})
@@ -211,7 +221,7 @@ async def collect_rollouts(
                 key = resolve_bank_key(
                     spec.game,
                     spec.assigned_role or "",
-                    AVALON_SIDES.get(spec.assigned_role, spec.assigned_role or ""),
+                    "",
                 )
                 bank = skill_banks.get(key)
                 if bank is not None:
@@ -224,6 +234,8 @@ async def collect_rollouts(
     async def _run_one(spec: EpisodeSpec) -> None:
         async with semaphore:
             game_bank = _bank_for(spec)
+            game_harness_hook = (harness_hooks or {}).get(spec.game)
+            game_profile = (game_profiles or {}).get(spec.game)
             result: Optional[EpisodeResult] = None
             for attempt in range(1, max_retries + 1):
                 try:
@@ -243,8 +255,17 @@ async def collect_rollouts(
                         assigned_role=spec.assigned_role,
                         assigned_role_index=spec.assigned_role_index,
                         step_sync=step_sync,
-                        opponent_model=_opp_model if spec.game in ("avalon", "diplomacy") else None,
-                        opponent_api_base=_opp_base if spec.game in ("avalon", "diplomacy") else None,
+                        opponent_model=None,
+                        opponent_api_base=None,
+                        harness_hook=game_harness_hook,
+                        reward_logger=reward_logger,
+                        game_profile=game_profile,
+                        intention_trigger=str(getattr(
+                            config, "intention_trigger", "every-step",
+                        )),
+                        actor_bank_cap_k=int(getattr(
+                            config, "actor_bank_cap_k", 0,
+                        )),
                     )
                     break
                 except Exception as exc:

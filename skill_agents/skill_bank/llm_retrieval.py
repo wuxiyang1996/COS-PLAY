@@ -39,7 +39,7 @@ def _get_retrieval_ask_fn() -> Optional[Callable[..., str]]:
     """
     from skill_agents._llm_compat import wrap_ask_for_reasoning_models
 
-    _hint = "Qwen/Qwen3-8B"
+    _hint = "Qwen/Qwen3.5-9B"
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()

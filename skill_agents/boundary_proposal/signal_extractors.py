@@ -285,6 +285,22 @@ _SUBGOAL_TAGS_DEFAULT = (
     "OPTIMIZE", "EXPLORE", "EXECUTE",
 )
 
+# Cross-domain reasoning operators (gym-v + future two-MDP corpus). Kept
+# in lockstep with `decision_agents.agent_helper.INTENT_OPERATORS`.
+# Both vocabularies are recognised by `parse_intention_tag` so banks
+# extracted from either corpus segment correctly without code surgery.
+_INTENT_OPERATORS_DEFAULT = (
+    "INSPECT", "TRACK", "COMPARE", "COMMIT", "VERIFY", "RECOVER",
+)
+
+# Unified subgoal alphabet used by the dual-axis ``[OP/SG]`` intention
+# format.  Mirror of ``decision_agents.agent_helper.UNIFIED_SUBGOALS``.
+_UNIFIED_SUBGOALS_DEFAULT = (
+    "SETUP", "NAVIGATE", "POSITION", "CLEAR", "MERGE", "COLLECT",
+    "BUILD", "ATTACK", "DEFEND", "EVADE", "OPTIMIZE", "SURVIVE",
+    "EXPLORE", "EXECUTE",
+)
+
 _TAG_ALIASES: Dict[str, str] = {
     "PLACE": "SETUP", "DROP": "EXECUTE", "MOVE": "NAVIGATE",
     "SWAP": "EXECUTE", "PUSH": "NAVIGATE", "JUMP": "NAVIGATE",
@@ -294,24 +310,164 @@ _TAG_ALIASES: Dict[str, str] = {
     "RUN": "NAVIGATE", "CREATE": "BUILD", "FIND": "EXPLORE",
     "FIX": "OPTIMIZE", "ALIGN": "POSITION", "TARGET": "ATTACK",
     "SECURE": "DEFEND", "EXPAND": "ATTACK", "RETREAT": "DEFEND",
+    # Synonyms for the INTENT_OPERATORS alphabet.
+    "GROUND": "INSPECT", "RETRIEVE": "INSPECT", "PARSE": "INSPECT",
+    "OBSERVE": "INSPECT", "STUDY": "INSPECT",
+    "WATCH": "TRACK", "FOLLOW": "TRACK", "WAIT": "TRACK",
+    "WEIGH": "COMPARE", "EVALUATE": "COMPARE", "CHOOSE": "COMPARE",
+    "CHECK": "VERIFY", "CONFIRM": "VERIFY", "ASSERT": "VERIFY",
+    "ACT": "COMMIT", "ADVANCE": "COMMIT", "ENGAGE": "COMMIT",
+    "SHOOT": "COMMIT", "HIT": "COMMIT", "PROGRESS": "COMMIT",
+    # EVADE is now a first-class subgoal, not a synonym for RECOVER;
+    # keep DODGE/SIDESTEP/AVOID mapping to it for free-text recovery.
+    "DODGE": "EVADE", "SIDESTEP": "EVADE", "AVOID": "EVADE",
+    "BLOCK": "DEFEND", "REACT": "RECOVER", "UNDO": "RECOVER",
 }
 
+# Cross-axis lift / collapse maps (mirror of agent_helper.SUBGOAL_TO_OPERATOR
+# and OPERATOR_TO_SUBGOAL). Used to inflate a legacy single-tag intention
+# into dual-axis form when a downstream consumer needs both axes.
+_SUBGOAL_TO_OPERATOR: Dict[str, str] = {
+    "SETUP": "INSPECT", "EXPLORE": "INSPECT",
+    "POSITION": "COMPARE", "COMPARE": "COMPARE",
+    "ATTACK": "COMMIT", "MERGE": "COMMIT", "BUILD": "COMMIT",
+    "EXECUTE": "COMMIT", "OPTIMIZE": "COMMIT", "COLLECT": "COMMIT",
+    "NAVIGATE": "COMMIT", "CLEAR": "COMMIT",
+    "DEFEND": "RECOVER", "EVADE": "RECOVER", "SURVIVE": "RECOVER",
+}
+
+_OPERATOR_TO_SUBGOAL: Dict[str, str] = {
+    "INSPECT": "EXPLORE", "TRACK": "EXPLORE", "COMPARE": "POSITION",
+    "COMMIT":  "EXECUTE", "VERIFY": "EXECUTE", "RECOVER": "EVADE",
+}
+
+# Single-tag bracket: e.g. ``[CLEAR]`` or ``[COMMIT]``.
 _TAG_RE = re.compile(r"\[(\w+)\]")
+# Dual-axis bracket: e.g. ``[COMMIT/EVADE]``.  Case-insensitive — callers
+# upper-case the captured groups before looking them up.
+_DUAL_TAG_RE = re.compile(r"\[\s*([A-Za-z]+)\s*/\s*([A-Za-z]+)\s*\]")
 
 
-def parse_intention_tag(intention: str, tags: tuple = _SUBGOAL_TAGS_DEFAULT) -> str:
-    """Extract and normalise the [TAG] from an intention string.
+def parse_intention_tag(
+    intention: str,
+    tags: tuple = _SUBGOAL_TAGS_DEFAULT,
+    extra_tags: tuple = _INTENT_OPERATORS_DEFAULT,
+    *,
+    mode: str = "operator",
+) -> str:
+    """Extract and normalise the primary ``[TAG]`` from an intention string.
 
-    Returns the canonical tag (e.g. ``"CLEAR"``) or ``"UNKNOWN"`` if no
-    recognised tag is found.
+    Accepts three input shapes:
+
+    * ``"[OP/SG] note"``  — dual-axis (current canonical labeling format).
+    * ``"[TAG] note"``    — legacy single-tag form.  TAG may belong to
+                            ``tags``, ``extra_tags``, or
+                            ``_UNIFIED_SUBGOALS_DEFAULT``.
+    * ``"<bare phrase>"`` — no bracket.  Returns ``"UNKNOWN"``.
+
+    The ``mode`` parameter controls which axis is returned:
+
+    * ``"operator"`` (default, backward compatible) — return the operator
+      half from a dual-axis tag, the canonical tag from a single-tag
+      input.  This is what every legacy caller expects.
+    * ``"composite"`` — return the joined ``"OP/SG"`` form (e.g.
+      ``"COMMIT/EXPLORE"``).  Intended for callsites that drive the bank
+      segmenter / scorer, where the subgoal axis is required to keep
+      same-operator transitions (``[COMMIT/EXPLORE]`` ↔
+      ``[COMMIT/ATTACK]``) as distinct categorical signals.
+      For single-tag legacy input the missing axis is reconstructed via
+      :data:`_OPERATOR_TO_SUBGOAL` / :data:`_SUBGOAL_TO_OPERATOR` so
+      pre-dual-axis banks still produce a usable composite key.
+    * ``"subgoal"`` — return the subgoal half only (rarely useful;
+      provided for symmetry).
+
+    Callers that need *both* axes as a tuple should use
+    :func:`parse_intention_tags` instead.
     """
-    m = _TAG_RE.match((intention or "").strip())
+    if mode not in ("operator", "composite", "subgoal"):
+        raise ValueError(f"parse_intention_tag: unknown mode={mode!r}")
+
+    if mode in ("composite", "subgoal"):
+        op, sg = parse_intention_tags(intention, extra_tags, _UNIFIED_SUBGOALS_DEFAULT)
+        if op == "UNKNOWN" and sg == "UNKNOWN":
+            return "UNKNOWN"
+        if mode == "subgoal":
+            return sg if sg != "UNKNOWN" else "EXECUTE"
+        op = op if op != "UNKNOWN" else "COMMIT"
+        sg = sg if sg != "UNKNOWN" else _OPERATOR_TO_SUBGOAL.get(op, "EXECUTE")
+        return f"{op}/{sg}"
+
+    s = (intention or "").strip()
+    if not s.startswith("["):
+        return "UNKNOWN"
+
+    m_dual = _DUAL_TAG_RE.match(s)
+    if m_dual:
+        op_raw = m_dual.group(1).upper()
+        if op_raw in extra_tags:
+            return op_raw
+        return _TAG_ALIASES.get(op_raw, "UNKNOWN")
+
+    m = _TAG_RE.match(s)
     if not m:
         return "UNKNOWN"
     raw = m.group(1).upper()
-    if raw in tags:
+    if (raw in tags or raw in extra_tags
+            or raw in _UNIFIED_SUBGOALS_DEFAULT):
         return raw
     return _TAG_ALIASES.get(raw, "UNKNOWN")
+
+
+def parse_intention_tags(
+    intention: str,
+    operators: tuple = _INTENT_OPERATORS_DEFAULT,
+    subgoals: tuple = _UNIFIED_SUBGOALS_DEFAULT,
+) -> Tuple[str, str]:
+    """Extract both ``(operator, subgoal)`` from an intention string.
+
+    Always returns a 2-tuple of canonical tags.  Behaviour:
+
+    * Dual-axis form  — both halves are returned, normalised via the
+      alias map.
+    * Single-tag form — the missing axis is reconstructed via
+      ``_OPERATOR_TO_SUBGOAL`` / ``_SUBGOAL_TO_OPERATOR`` so existing banks
+      without dual labels continue to surface useful signal.
+    * Bare or empty   — returns ``("UNKNOWN", "UNKNOWN")``.
+
+    Both axes are ``"UNKNOWN"`` only when the intention is missing the
+    bracket entirely.
+    """
+    s = (intention or "").strip()
+    if not s.startswith("["):
+        return "UNKNOWN", "UNKNOWN"
+
+    m_dual = _DUAL_TAG_RE.match(s)
+    if m_dual:
+        op_raw = m_dual.group(1).upper()
+        sg_raw = m_dual.group(2).upper()
+        op = op_raw if op_raw in operators else _TAG_ALIASES.get(op_raw, "")
+        if op not in operators:
+            op = "COMMIT"
+        sg = sg_raw if sg_raw in subgoals else _TAG_ALIASES.get(sg_raw, "")
+        if sg not in subgoals:
+            sg = _OPERATOR_TO_SUBGOAL.get(op, "EXECUTE")
+        return op, sg
+
+    m = _TAG_RE.match(s)
+    if not m:
+        return "UNKNOWN", "UNKNOWN"
+    raw = m.group(1).upper()
+    canon = (
+        raw if (raw in operators or raw in subgoals
+                or raw in _SUBGOAL_TAGS_DEFAULT)
+        else _TAG_ALIASES.get(raw, "UNKNOWN")
+    )
+    if canon == "UNKNOWN":
+        return "UNKNOWN", "UNKNOWN"
+    if canon in operators:
+        return canon, _OPERATOR_TO_SUBGOAL.get(canon, "EXECUTE")
+    # canon is a subgoal (unified or legacy)
+    return _SUBGOAL_TO_OPERATOR.get(canon, "COMMIT"), canon
 
 
 class IntentionSignalExtractor(SignalExtractorBase):
@@ -362,7 +518,7 @@ class IntentionSignalExtractor(SignalExtractorBase):
         predicates: List[Optional[dict]] = []
         for exp in experiences:
             intent = getattr(exp, "intentions", None) or ""
-            tag = parse_intention_tag(intent, self._tags)
+            tag = parse_intention_tag(intent, self._tags, mode="composite")
 
             preds: dict = {f"tag_{t.lower()}": float(t == tag) for t in self._tags}
 
@@ -375,11 +531,17 @@ class IntentionSignalExtractor(SignalExtractorBase):
         return predicates
 
     def _extract_tag_sequence(self, experiences: list) -> List[str]:
-        """Extract the tag at each timestep."""
+        """Extract the composite ``OP/SG`` tag at each timestep.
+
+        Composite mode is required so adjacent steps with identical
+        operator but different subgoals (``[COMMIT/EXPLORE]`` followed by
+        ``[COMMIT/ATTACK]``) register as a boundary candidate rather than
+        collapsing into a single ``COMMIT`` run.
+        """
         tags = []
         for exp in experiences:
             intent = getattr(exp, "intentions", None) or ""
-            tags.append(parse_intention_tag(intent, self._tags))
+            tags.append(parse_intention_tag(intent, self._tags, mode="composite"))
         return tags
 
     def score_boundary_candidates(self, experiences: list) -> List:

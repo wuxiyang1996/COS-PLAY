@@ -1,0 +1,36 @@
+# assistantbench: full validation split (33 tasks)
+# Locally gradable — gold answers shipped with the dataset.
+# Use for the headline AssistantBench validation number.
+browsergym/assistantbench.validation.0
+browsergym/assistantbench.validation.1
+browsergym/assistantbench.validation.2
+browsergym/assistantbench.validation.3
+browsergym/assistantbench.validation.4
+browsergym/assistantbench.validation.5
+browsergym/assistantbench.validation.6
+browsergym/assistantbench.validation.7
+browsergym/assistantbench.validation.8
+browsergym/assistantbench.validation.9
+browsergym/assistantbench.validation.10
+browsergym/assistantbench.validation.11
+browsergym/assistantbench.validation.12
+browsergym/assistantbench.validation.13
+browsergym/assistantbench.validation.14
+browsergym/assistantbench.validation.15
+browsergym/assistantbench.validation.16
+browsergym/assistantbench.validation.17
+browsergym/assistantbench.validation.18
+browsergym/assistantbench.validation.19
+browsergym/assistantbench.validation.20
+browsergym/assistantbench.validation.21
+browsergym/assistantbench.validation.22
+browsergym/assistantbench.validation.23
+browsergym/assistantbench.validation.24
+browsergym/assistantbench.validation.25
+browsergym/assistantbench.validation.26
+browsergym/assistantbench.validation.27
+browsergym/assistantbench.validation.28
+browsergym/assistantbench.validation.29
+browsergym/assistantbench.validation.30
+browsergym/assistantbench.validation.31
+browsergym/assistantbench.validation.32

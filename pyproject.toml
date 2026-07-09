@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "cosplay-game-ai-agent"
@@ -58,8 +58,18 @@ eval = [
 dev = [
     "pytest>=7.0",
 ]
+# Visual-grounding back-ends used by the VLM wrapper (Florence-2, OmniParser-v2,
+# GroundingDINO, OCR).  Optional because the heuristic head and the GPT-4o
+# vision head both work without them.
+vision = [
+    "timm>=0.9",            # required by Florence-2 image backbone
+    "easyocr>=1.7",         # OCR fallback when paddleocr is not installed
+    "ultralytics>=8.0",     # YOLO icon detector used by OmniParser-v2
+    "opencv-python>=4.7",
+    "decord>=0.6",          # video frame decoding for tools_video.py
+]
 all = [
-    "cosplay-game-ai-agent[baselines,eval,dev]",
+    "cosplay-game-ai-agent[baselines,eval,dev,vision]",
 ]
 
 [project.urls]
@@ -77,6 +87,11 @@ include = [
     "data_structure*",
     "cold_start*",
     "labeling*",
+    "vlm_wrapper*",
+    "gymv_wrapper*",
+    "browsergym_wrapper*",
+    "osworld_wrapper*",
+    "visual_reasoning_wrapper*",
 ]
 exclude = [
     "tests*",
@@ -84,3 +99,11 @@ exclude = [
     "ablation_study*",
     "install*",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: tests that hit a live GPT-4o API (skipped without OPENAI_API_KEY)",
+]
+# Live tests are off by default so `pytest` stays cheap.  Opt in with
+#     pytest -m "live or not live" vlm_wrapper/tests
+addopts = "-m 'not live'"

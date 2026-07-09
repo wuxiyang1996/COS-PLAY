@@ -70,6 +70,11 @@ except ImportError:
     make_gaming_env = None
 
 try:
+    from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
+except ImportError:
+    TetrisMacroActionWrapper = None
+
+try:
     from decision_agents.dummy_agent import (
         language_agent_action,
         GAME_GAMINGAGENT,
@@ -120,7 +125,12 @@ def _run_single_episode(
         return {"error": "Missing imports (gym_like or GamingAgentNLWrapper)"}
 
     base_env = make_gaming_env(game=game, max_steps=max_steps)
-    env = GamingAgentNLWrapper(base_env)
+    if game == "tetris":
+        if TetrisMacroActionWrapper is None:
+            return {"error": "TetrisMacroActionWrapper unavailable (tetris requires macro-action wrapper)"}
+        env = TetrisMacroActionWrapper(GamingAgentNLWrapper(base_env))
+    else:
+        env = GamingAgentNLWrapper(base_env)
 
     obs_nl, info = env.reset()
     action_names = info.get("action_names", [])

@@ -240,7 +240,7 @@ class DecisionGRPOTrainer:
 
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen3-8B",
+        model_name: str = "Qwen/Qwen3.5-9B",
         adapter_dir: str = "runs/lora_adapters",
         devices: Optional[List[int]] = None,
         group_size: int = 8,
@@ -467,7 +467,7 @@ class SkillBankGRPOTrainer:
 
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen3-8B",
+        model_name: str = "Qwen/Qwen3.5-9B",
         adapter_dir: str = "runs/lora_adapters",
         devices: Optional[List[int]] = None,
         lr: float = 5e-5,

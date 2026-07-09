@@ -21,7 +21,7 @@ except ImportError:
 # Summary budget constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_LLM_MODEL: str = "gpt-4o-mini"
+DEFAULT_LLM_MODEL: str = "Qwen/Qwen3.5-9B"  # project-wide actor backbone; see common/models.py BACKBONE_MODEL
 """Fallback LLM model when none is explicitly provided by the caller.
 Both GPT and Qwen inference paths should always pass an explicit model;
 this constant only guards against accidental None."""
@@ -238,6 +238,106 @@ SUBGOAL_TAGS = (
     "NAVIGATE", "POSITION", "COLLECT", "BUILD", "SURVIVE",
     "OPTIMIZE", "EXPLORE", "EXECUTE",
 )
+
+
+# ---------------------------------------------------------------------------
+# Dual-axis intention scheme (current canonical labeling format).
+#
+# Each step is annotated with TWO orthogonal tags:
+#
+#   1. ``operator`` ∈ INTENT_OPERATORS
+#      The agent's *cognitive mode* — domain-agnostic, transferable across
+#      every game and corpus.  Maps cleanly onto the inner-hop operator
+#      alphabet of the two-level MDP design (see
+#      ``plans/02-action-agent/PLAN-ACTION-AGENT.md §5.3``).
+#
+#   2. ``subgoal``  ∈ UNIFIED_SUBGOALS
+#      The agent's *game-level achievement* — what is being attempted in the
+#      current state (clear a row, evade bullets, collect an orb).  Anchors
+#      skill discovery to concrete domain goals.
+#
+# A bracketed intention is therefore written as ``"[OPERATOR/SUBGOAL] note"``
+# (e.g. ``"[COMMIT/EVADE] sidestep left to avoid bullets"``).  The
+# downstream ``parse_intention_tag`` and ``parse_intention_tags`` helpers in
+# ``skill_agents.boundary_proposal.signal_extractors`` accept both this dual
+# form and the legacy single-tag form.
+#
+# Cross-vocabulary mappings (``SUBGOAL_TO_OPERATOR`` /
+# ``OPERATOR_TO_SUBGOAL``) ensure a single-tag legacy intention can always
+# be expanded into dual-axis form, and vice-versa.
+# ---------------------------------------------------------------------------
+
+INTENT_OPERATORS = (
+    "INSPECT",   # parsing / understanding current state — transition
+                 #   screens, opening moves, RAG retrieval, "what is here"
+    "TRACK",     # following / waiting on a state change the agent does
+                 #   not control — animation, opponent, page load, NOOP
+    "COMPARE",   # weighing options before commit — A vs B, two
+                 #   candidate UI targets, two candidate moves
+    "COMMIT",    # taking the chosen action with goal-progressing intent
+                 #   (attack, advance, click, type, place piece). Default
+                 #   when the agent is *acting* — not the same as VERIFY.
+    "VERIFY",    # *only* observing the result of a recently completed
+                 #   action with no new directional intent (idle wait,
+                 #   NOOP, "did the menu close yet?"). Reserve carefully.
+    "RECOVER",   # reactive / defensive response to surprise or failure
+                 #   (dodge, retreat, undo, panic-block)
+)
+
+
+# Unified subgoal vocabulary — covers both env_wrappers (turn-based puzzle
+# / strategy) and gym-v (real-time action) games with a single 14-tag set.
+# `EVADE` is split out from `DEFEND` so dodge-style movement gets a
+# discriminative subgoal anchor (esp. shoot-em-ups, fighting games).
+UNIFIED_SUBGOALS = (
+    "SETUP",     # opening / menu / pre-game / get-ready / configuring
+    "NAVIGATE",  # locomotion toward a target (no immediate threat)
+    "POSITION",  # alignment / staging for a future commit
+    "CLEAR",     # remove obstacles, rows, matches
+    "MERGE",     # combine units to form a bigger unit (2048, fusion)
+    "COLLECT",   # pick up an item (powerup, coin, orb)
+    "BUILD",     # construct / extend / craft
+    "ATTACK",    # offensive action toward an enemy or objective
+    "DEFEND",    # block / parry / shield in place
+    "EVADE",     # dodge / sidestep / outrun an incoming threat
+    "OPTIMIZE",  # improve configuration without committing a goal move
+    "SURVIVE",   # avoid imminent failure (low HP, top-out, time-out)
+    "EXPLORE",   # probe unknown state, opening unknown options
+    "EXECUTE",   # primitive low-level action (catch-all default)
+)
+
+
+# Cross-axis mappings.  Used to:
+#   * collapse a (operator, subgoal) pair to a single tag for legacy
+#     consumers,
+#   * inflate a single legacy tag into dual-axis form so older banks
+#     keep loading.
+SUBGOAL_TO_OPERATOR: Dict[str, str] = {
+    "SETUP": "INSPECT",
+    "EXPLORE": "INSPECT",
+    "POSITION": "COMPARE",
+    "COMPARE": "COMPARE",
+    "ATTACK": "COMMIT",
+    "MERGE": "COMMIT",
+    "BUILD": "COMMIT",
+    "EXECUTE": "COMMIT",
+    "OPTIMIZE": "COMMIT",
+    "COLLECT": "COMMIT",
+    "NAVIGATE": "COMMIT",
+    "CLEAR": "COMMIT",
+    "DEFEND": "RECOVER",
+    "EVADE": "RECOVER",
+    "SURVIVE": "RECOVER",
+}
+
+OPERATOR_TO_SUBGOAL: Dict[str, str] = {
+    "INSPECT": "EXPLORE",
+    "TRACK": "EXPLORE",
+    "COMPARE": "POSITION",
+    "COMMIT": "EXECUTE",
+    "VERIFY": "EXECUTE",
+    "RECOVER": "EVADE",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -675,26 +775,67 @@ def strip_think_tags(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 _INTENTION_TAG_RE = re.compile(r"\[(\w+)\]\s*")
+_INTENTION_DUAL_RE = re.compile(r"\[\s*([A-Za-z]+)\s*/\s*([A-Za-z]+)\s*\]\s*")
 _INTENTION_TAG_SET = frozenset(SUBGOAL_TAGS)
+_INTENT_OPERATOR_SET = frozenset(INTENT_OPERATORS)
+_UNIFIED_SUBGOAL_SET = frozenset(UNIFIED_SUBGOALS)
+_INTENTION_VALID_SET = (
+    _INTENTION_TAG_SET | _INTENT_OPERATOR_SET | _UNIFIED_SUBGOAL_SET
+)
 _INTENTION_TAG_ALIASES: Dict[str, str] = {
     "PLACE": "SETUP", "DROP": "EXECUTE", "MOVE": "NAVIGATE",
     "RETREAT": "DEFEND", "ADVANCE": "ATTACK", "GATHER": "COLLECT",
     "CRAFT": "BUILD", "PLAN": "SETUP", "SCORE": "ATTACK",
     "CONSOLIDATE": "POSITION", "FLEE": "SURVIVE",
+    "DODGE": "EVADE", "AVOID": "EVADE", "SIDESTEP": "EVADE",
+    "GROUND": "INSPECT", "CHECK": "VERIFY", "RETRIEVE": "INSPECT",
 }
 
 
 def _normalize_intention_tag(raw: str) -> str:
-    """Ensure intention has a valid ``[TAG] phrase`` format."""
+    """Ensure intention has a valid ``[TAG] phrase`` (or ``[OP/SG] phrase``) format.
+
+    Accepts three input shapes (in priority order):
+
+    * ``[OP/SG] note`` — preferred dual-axis form.  Both halves are
+      validated and unknown labels are passed through the alias map.
+      Result is preserved as ``[OP/SG] note``.
+    * ``[TAG] note``   — legacy single-tag form.  TAG may be a SUBGOAL_TAG,
+      an INTENT_OPERATOR, or a UNIFIED_SUBGOAL.  Unknown tags are mapped
+      via ``_INTENTION_TAG_ALIASES`` or fall back to ``EXECUTE``.
+    * ``note``         — bare phrase.  Wrapped as ``[EXECUTE] note``.
+    """
     raw = raw.split("\n")[0].strip().strip('"').strip("'")
     if not raw.startswith("["):
         return f"[EXECUTE] {raw}"
+
+    # Dual-axis [OP/SG] form first.
+    m_dual = _INTENTION_DUAL_RE.match(raw)
+    if m_dual:
+        op_raw = m_dual.group(1).upper()
+        sg_raw = m_dual.group(2).upper()
+        rest = raw[m_dual.end():].strip()
+        op = (
+            op_raw if op_raw in _INTENT_OPERATOR_SET
+            else _INTENTION_TAG_ALIASES.get(op_raw)
+        )
+        if op not in _INTENT_OPERATOR_SET:
+            op = "COMMIT"
+        sg = (
+            sg_raw if sg_raw in _UNIFIED_SUBGOAL_SET
+            else _INTENTION_TAG_ALIASES.get(sg_raw)
+        )
+        if sg not in _UNIFIED_SUBGOAL_SET:
+            sg = OPERATOR_TO_SUBGOAL.get(op, "EXECUTE")
+        return f"[{op}/{sg}] {rest}" if rest else f"[{op}/{sg}]"
+
+    # Legacy single-tag form.
     m = _INTENTION_TAG_RE.match(raw)
     if not m:
         return f"[EXECUTE] {raw}"
     tag = m.group(1).upper()
     rest = raw[m.end():].strip()
-    if tag not in _INTENTION_TAG_SET:
+    if tag not in _INTENTION_VALID_SET:
         tag = _INTENTION_TAG_ALIASES.get(tag, "EXECUTE")
     return f"[{tag}] {rest}" if rest else f"[{tag}]"
 

@@ -1,0 +1,93 @@
+{
+  "source_game": "twenty_forty_eight",
+  "target_game": "twenty_forty_eight",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/twenty_forty_eight/skill_bank.jsonl",
+  "actions_root": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_actions_out/run_20260430_064325",
+  "k": 4,
+  "pass_rate_min": 0.5,
+  "max_skills": 3,
+  "max_demos_per_episode": 2,
+  "max_episodes": 3,
+  "n_skills": 3,
+  "n_passed_target_pass_rate": 3,
+  "n_verified_tasks_promoted": 3,
+  "eligibility_before_admit_count": 3,
+  "eligibility_after_admit_count": 3,
+  "eligibility_admit_delta": 0,
+  "elapsed_s": 1.25,
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__MERGE",
+      "skill_type": "action",
+      "source_task": "twenty_forty_eight",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 3,
+      "n_aborted": 0,
+      "pass_rate": 0.75,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 2.804279327392578,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    },
+    {
+      "skill_id": "mid:OPTIMIZE",
+      "skill_type": "action",
+      "source_task": "twenty_forty_eight",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 2.450227737426758,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    },
+    {
+      "skill_id": "COMPARE__MERGE",
+      "skill_type": "reasoning",
+      "source_task": "twenty_forty_eight",
+      "target_task": "twenty_forty_eight",
+      "target_domain": "gymv",
+      "n_demos": 6,
+      "n_demos_used": 4,
+      "n_success": 4,
+      "n_aborted": 0,
+      "pass_rate": 1.0,
+      "success": true,
+      "diagnostic_label": null,
+      "cost_ms": 1.3380050659179688,
+      "cost_tokens": 0.0,
+      "verified_task_promoted": true,
+      "feasible_tasks_before": [
+        "twenty_forty_eight"
+      ],
+      "verified_tasks_before": [],
+      "verified_tasks_after": [
+        "twenty_forty_eight"
+      ]
+    }
+  ],
+  "timestamp": "20260501_040345"
+}

@@ -12,11 +12,43 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 
+def _default_judge_model() -> Optional[str]:
+    """Resolve the canonical judge model from ``common.models``.
+
+    Falls back to ``None`` (which the caller interprets as "use whatever
+    ``API_func.ask_model`` defaults to") only when the constant import
+    itself fails — extremely unusual but keeps this dataclass importable
+    in stripped-down test environments without the full repo on path.
+    """
+    try:
+        from common.models import BACKBONE_JUDGE_MODEL
+        return BACKBONE_JUDGE_MODEL
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @dataclass
 class LLMJudgeConfig:
-    """Parameters for the LLM judge used across all evaluation dimensions."""
+    """Parameters for the LLM judge used across all evaluation dimensions.
 
-    model: Optional[str] = None
+    The judge is intentionally distinct from the actor backbone (the
+    actor is the LoRA-trained 9B; the judge is the frozen 35B-A3B
+    teacher). By default it uses
+    ``common.models.BACKBONE_JUDGE_MODEL`` (``Qwen/Qwen3.5-35B-A3B``),
+    which means judge calls hit the local 35B vLLM server with no
+    API spend. The 35B is shared with the crafter / harness / orchestrator
+    teacher (same weights, different role) so both can be served by a
+    single ``inference/serve_qwen35_35b_a3b.sh`` instance.
+
+    For paper / formal eval where within-Qwen-family self-preference
+    bias must be controlled, override to an off-distribution oracle
+    (e.g. ``gpt-5.5``) by exporting
+    ``VLM_AGENT_BACKBONE_JUDGE_MODEL=gpt-5.5`` — see
+    ``implementation_notes/coevolution-cross-domain-integration.md``
+    §"Judge family bias" for the spot-check protocol.
+    """
+
+    model: Optional[str] = field(default_factory=_default_judge_model)
     temperature: float = 0.3
     max_tokens: int = 2048
 

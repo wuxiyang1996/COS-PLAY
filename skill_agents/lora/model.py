@@ -1,9 +1,10 @@
 """
 Multi-LoRA skill-bank LLM wrapper (GRPO edition).
 
-Loads one shared Qwen3-8B causal-LM backbone and up to 3 GRPO-trained
-LoRA adapters (segment, contract, curator).  BOUNDARY and RETRIEVAL
-enum values are kept for backward compat but have no adapters here.
+Loads one shared Qwen/Qwen3.5-9B causal-LM backbone and up to 3
+GRPO-trained LoRA adapters (segment, contract, curator).  BOUNDARY and
+RETRIEVAL enum values are kept for backward compat but have no adapters
+here.
 
 Two entry-points:
   - ``generate()`` — standard text generation (inference mode, no gradients).
@@ -15,7 +16,7 @@ Usage::
     from skill_agents.lora import MultiLoraSkillBankLLM, MultiLoraConfig, SkillFunction
 
     cfg = MultiLoraConfig(
-        base_model_name_or_path="Qwen/Qwen3-8B",
+        base_model_name_or_path="Qwen/Qwen3.5-9B",
         adapter_paths={
             "segment":  "runs/lora_adapters/segment",
             "contract": "runs/lora_adapters/contract",
@@ -126,7 +127,11 @@ class MultiLoraSkillBankLLM:
 
     def _load_base_model(self) -> None:
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+        try:
+            from transformers import AutoModelForImageTextToText  # type: ignore
+        except ImportError:  # pragma: no cover — older transformers <5
+            AutoModelForImageTextToText = None  # type: ignore
 
         dtype = getattr(torch, self.config.dtype, torch.bfloat16)
 
@@ -154,7 +159,30 @@ class MultiLoraSkillBankLLM:
                 self.config.device,
             )
 
-        self._model = AutoModelForCausalLM.from_pretrained(
+        # T2.13 fix (2026-05-03): pick the loader class that matches the
+        # production vLLM / GRPO module tree.  Multimodal Qwen3.5 / Qwen3-VL
+        # carries ``text_config`` + ``vision_config`` and the umbrella
+        # architecture is ``Qwen3_5ForConditionalGeneration``; loading via
+        # ``AutoModelForCausalLM`` here would attach LoRA at
+        # ``model.layers.<i>.…`` and the saved keys would lack the
+        # ``language_model.`` prefix the live tower expects, silently
+        # zero-initing the LoRA delta at load time.  See audit §0.3 T2.13.
+        _cfg = AutoConfig.from_pretrained(
+            self.config.base_model_name_or_path, trust_remote_code=True,
+        )
+        _is_mm = hasattr(_cfg, "text_config") or hasattr(_cfg, "vision_config")
+        loader_cls = (
+            AutoModelForImageTextToText
+            if (_is_mm and AutoModelForImageTextToText is not None)
+            else AutoModelForCausalLM
+        )
+        if loader_cls is not AutoModelForCausalLM:
+            logger.info(
+                "Multimodal base detected — using %s (matches vLLM serve path)",
+                loader_cls.__name__,
+            )
+
+        self._model = loader_cls.from_pretrained(
             self.config.base_model_name_or_path,
             **load_kwargs,
         )
@@ -216,9 +244,23 @@ class MultiLoraSkillBankLLM:
         """
         import torch
         from peft import LoraConfig, TaskType, get_peft_model
+        from transformers import AutoConfig
 
         if self._model is None:
             raise RuntimeError("Call load() before prepare_for_training()")
+
+        # T2.11 fix (2026-05-03): resolve target_modules through the single
+        # source of truth so the random-init fallback covers ALL Qwen3.5
+        # hybrid legs (linear_attn.* + mlp.* + self_attn.*).  See
+        # ``trainer/SFT/lora_targets.py`` and audit §0.3 T2.11.
+        from trainer.SFT.lora_targets import resolve_target_modules as _resolve_targets
+        _cfg = AutoConfig.from_pretrained(
+            self.config.base_model_name_or_path, trust_remote_code=True,
+        )
+        _text_arch = (
+            getattr(getattr(_cfg, "text_config", _cfg), "model_type", "") or ""
+        ).lower()
+        _target_modules = _resolve_targets(text_arch=_text_arch)
 
         for name in adapter_names:
             if name in self._loaded_adapters:
@@ -228,10 +270,7 @@ class MultiLoraSkillBankLLM:
                 r=16,
                 lora_alpha=32,
                 lora_dropout=0.05,
-                target_modules=[
-                    "q_proj", "k_proj", "v_proj", "o_proj",
-                    "gate_proj", "up_proj", "down_proj",
-                ],
+                target_modules=list(_target_modules),
                 inference_mode=False,
             )
             if not self._is_peft_model:
@@ -242,7 +281,10 @@ class MultiLoraSkillBankLLM:
             else:
                 self._model.add_adapter(name, lora_cfg)
             self._loaded_adapters[name] = True
-            logger.info("Created fresh LoRA adapter '%s' (r=16, alpha=32)", name)
+            logger.info(
+                "Created fresh LoRA adapter '%s' (r=16, alpha=32, arch=%s, target_modules=%d legs)",
+                name, _text_arch or "unknown", len(_target_modules),
+            )
 
         for n, p in self._model.named_parameters():
             p.requires_grad = "lora" in n.lower()

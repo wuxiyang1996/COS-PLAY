@@ -1,6 +1,6 @@
-"""Compatibility helpers for reasoning-model LLM calls (Qwen3, QwQ, etc.).
+"""Compatibility helpers for reasoning-model LLM calls (Qwen3 / Qwen3.5, QwQ, etc.).
 
-Reasoning models like Qwen3-8B default to an internal "thinking" mode that
+Reasoning models like Qwen3.5-9B default to an internal "thinking" mode that
 emits ``<think>…</think>`` blocks *before* the actual answer.  These blocks
 consume the ``max_tokens`` budget and often leave nothing for the structured
 output we need (JSON, rankings, protocols).
@@ -17,7 +17,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
-_REASONING_MODEL_PATTERNS = ("qwen3", "qwen-3", "qwq")
+# Match Qwen3 / Qwen3.5 (incl. the 35B-A3B MoE) and QwQ reasoning families.
+_REASONING_MODEL_PATTERNS = ("qwen3", "qwen-3", "qwen3.5", "qwq")
 _THINK_COMPLETE_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
 _THINK_OPEN_RE = re.compile(r"<think>[\s\S]*$", re.DOTALL)
 

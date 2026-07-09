@@ -13,6 +13,8 @@ contain ``contract`` and ``report`` (auto-migrated to ``Skill`` on load).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -217,25 +219,49 @@ class SkillBankMVP:
     # ── Persistence ─────────────────────────────────────────────────
 
     def save(self, filepath: Optional[str] = None) -> None:
-        """Save bank to JSONL.
+        """Save bank to JSONL atomically.
 
         Each line: ``{"skill": {...}, "report": {...|null}}``.
         The contract is inside ``skill.contract`` — no separate key.
         Old-format files (top-level ``"contract"``) are still loadable.
+
+        Atomic write contract: writes to a temp file in the same
+        directory, ``fsync`` it, then ``os.replace`` onto ``path``. On
+        POSIX this guarantees concurrent readers (e.g. the Layer-D
+        cross-domain dashboard sidecar in ``scripts/dashboard_sidecar.py``,
+        the in-trainer ``trainer.coevolution._dashboard_hook``, or any
+        ``_phase4_transfer_matrix.py`` subprocess) either see the prior
+        complete file or the new complete file — never a half-written
+        truncate-and-write transient.
         """
         path = Path(filepath or self._path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            for skill_id, skill in self._skills.items():
-                entry = {
-                    "skill": skill.to_dict(),
-                    "report": (
-                        self._reports[skill_id].to_dict()
-                        if skill_id in self._reports
-                        else None
-                    ),
-                }
-                f.write(json.dumps(entry, default=str) + "\n")
+
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                for skill_id, skill in self._skills.items():
+                    entry = {
+                        "skill": skill.to_dict(),
+                        "report": (
+                            self._reports[skill_id].to_dict()
+                            if skill_id in self._reports
+                            else None
+                        ),
+                    }
+                    f.write(json.dumps(entry, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except BaseException:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
     def load(self, filepath: Optional[str] = None) -> None:
         """Load bank from JSONL (backward-compatible with old format).

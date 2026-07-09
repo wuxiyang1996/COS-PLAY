@@ -710,6 +710,56 @@ def format_skill_guidance_for_prompt(
 # Top-k skill candidate retrieval + LLM-based skill selection
 # ---------------------------------------------------------------------------
 
+def _resolve_skill_record_fetcher(skill_bank: Any) -> Optional[Any]:
+    """Return a callable mapping ``skill_id -> SkillRecord | None`` if the
+    bank exposes one, else ``None``. Used to thread harness rejection
+    history into the RAG reranker (see Refinement A in
+    ``harness/README.md`` §22.5).
+    """
+    underlying = (
+        getattr(skill_bank, "_bank", None)
+        or getattr(skill_bank, "bank", None)
+        or skill_bank
+    )
+    fetch = getattr(underlying, "get_skill", None)
+    return fetch if callable(fetch) else None
+
+
+def _apply_harness_rejection_deboost(
+    candidates: List[Dict[str, Any]],
+    *,
+    skill_bank: Any,
+    domain: str,
+    task: str,
+) -> List[Dict[str, Any]]:
+    """Best-effort: apply :func:`harness.rejection_deboost.compute_deboost`
+    to every candidate's ``confidence`` / ``relevance``, re-sort by the
+    deboosted score, and stamp ``_harness_deboost`` on each dict so the
+    skill_selection prompt (Refinement B) can render the signal.
+
+    Failures are silenced — the harness reranker must never break the
+    rollout.
+    """
+    if not candidates:
+        return candidates
+    try:
+        from harness.rejection_deboost import apply_deboost_to_candidates
+    except Exception:
+        return candidates
+    fetch = _resolve_skill_record_fetcher(skill_bank)
+    if fetch is None:
+        return candidates
+    try:
+        return apply_deboost_to_candidates(
+            candidates,
+            fetch_record=fetch,
+            domain=domain,
+            task=task,
+        )
+    except Exception:
+        return candidates
+
+
 def get_top_k_skill_candidates(
     skill_bank: Any,
     state_text: str,
@@ -717,12 +767,28 @@ def get_top_k_skill_candidates(
     intention: str = "",
     structured_state: Optional[Dict[str, Any]] = None,
     top_k: int = 3,
+    *,
+    apply_rejection_deboost: bool = True,
+    bank_cap_k: int = 0,
 ) -> List[Dict[str, Any]]:
     """Retrieve *top_k* skill candidates from the skill bank.
 
     Returns a list of guidance dicts (same schema as ``get_skill_guidance``),
     sorted by confidence (highest first).  When fewer than *top_k* skills
     are available, returns whatever is available.
+
+    Refinement A — Harness rejection deboost
+    ----------------------------------------
+    When ``apply_rejection_deboost`` is True (default), each candidate's
+    ``confidence`` / ``relevance`` is multiplied by a deboost factor in
+    ``[0.10, 1.0]`` derived from
+    :attr:`SkillRecord.false_binding_patterns` (the durable aggregate of
+    harness vetoes; see :func:`harness.rejection_deboost.compute_deboost`).
+    Skills that consistently fail the harness's eligibility filter on the
+    current ``(domain, task)`` axis sink in the ranking — but never
+    below a configurable floor, so the LLM can still consider them when
+    no fresh candidate exists. This is the "harness teaches RAG" loop
+    documented in ``harness/README.md`` §22.5.
     """
     if skill_bank is None:
         return []
@@ -750,12 +816,24 @@ def get_top_k_skill_candidates(
     # Preferred path: SkillQueryEngine.select() returns rich SkillSelectionResult list
     if hasattr(skill_bank, "select"):
         try:
-            results = skill_bank.select(
-                key,
+            _select_kwargs: Dict[str, Any] = dict(
                 current_state=state_for_scoring,
                 current_predicates=state_for_scoring,
                 top_k=top_k,
             )
+            # Block B5 — pass through actor-bank-cap-K when SkillQueryEngine
+            # supports it (post-block-B refactor).  Falls back silently
+            # for older engines so existing callers stay backward-
+            # compatible.
+            if bank_cap_k and bank_cap_k > 0:
+                try:
+                    import inspect as _inspect
+                    sig = _inspect.signature(skill_bank.select)
+                    if "bank_cap_k" in sig.parameters:
+                        _select_kwargs["bank_cap_k"] = int(bank_cap_k)
+                except Exception:
+                    pass
+            results = skill_bank.select(key, **_select_kwargs)
             for r in (results or []):
                 d = r.to_dict() if hasattr(r, "to_dict") else dict(r)
                 sid = d.get("skill_id")
@@ -769,6 +847,13 @@ def get_top_k_skill_candidates(
             pass
 
     if candidates:
+        if apply_rejection_deboost:
+            candidates = _apply_harness_rejection_deboost(
+                candidates,
+                skill_bank=skill_bank,
+                domain=game_name,
+                task=intention,
+            )
         return candidates
 
     # Fallback: build candidates from all active skills so that
@@ -789,6 +874,13 @@ def get_top_k_skill_candidates(
                         _enrich_candidate(skill_bank, d)
                         candidates.append(d)
                 if len(candidates) >= 2:
+                    if apply_rejection_deboost:
+                        candidates = _apply_harness_rejection_deboost(
+                            candidates,
+                            skill_bank=skill_bank,
+                            domain=game_name,
+                            task=intention,
+                        )
                     return candidates
     except Exception:
         pass
@@ -879,7 +971,23 @@ SKILL_SELECTION_USER_TEMPLATE = (
 
 
 def _format_candidates_for_selection(candidates: List[Dict[str, Any]]) -> str:
-    """Format candidate skills as a numbered menu for the selection prompt."""
+    """Format candidate skills as a numbered menu for the selection prompt.
+
+    Surfaces two harness-derived signals when present (Refinements A and
+    B in ``harness/README.md`` §22.5):
+
+    * ``_harness_adaptation_score`` — a ``[0, 1]`` summary of how well
+      the harness expects this skill to adapt to the current
+      ``(domain, task)``. Higher = more confident. Rendered as
+      ``Adaptation: 0.85``.
+    * ``_harness_deboost`` — the multiplicative factor applied during
+      RAG reranking (≤ 1.0 means the harness has been vetoing this
+      skill recently; 1.0 means it's clean). Only rendered when the
+      factor is meaningfully below 1.0.
+
+    Both signals are best-effort: candidates assembled outside the
+    harness path simply omit them and the formatter degrades silently.
+    """
     lines: List[str] = []
     for i, c in enumerate(candidates, 1):
         name = c.get("skill_name") or c.get("skill_id", f"strategy_{i}")
@@ -899,6 +1007,13 @@ def _format_candidates_for_selection(candidates: List[Dict[str, Any]]) -> str:
         confidence = c.get("confidence")
         if confidence is not None:
             lines.append(f"     Confidence: {confidence:.2f}")
+
+        adapt = c.get("_harness_adaptation_score")
+        if isinstance(adapt, (int, float)):
+            lines.append(f"     Adaptation: {float(adapt):.2f}")
+        deboost = c.get("_harness_deboost")
+        if isinstance(deboost, (int, float)) and float(deboost) < 0.95:
+            lines.append(f"     Recent veto rate: {1.0 - float(deboost):.2f}")
     return "\n".join(lines)
 
 

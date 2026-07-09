@@ -3,35 +3,46 @@
 # install_main_env.sh
 #
 # Creates the "game-ai-agent" conda environment with ALL dependencies for:
-#   - COS-PLAY co-evolution training (GRPO + FSDP + LoRA)
-#   - Skill bank pipeline (boundary proposal, segmentation, contract, curation)
-#   - RAG retrieval (Qwen3-Embedding-0.6B)
+#   - GRPO + FSDP + LoRA training on Qwen3.5-9B
+#   - vLLM 0.20 inference (Qwen3.5-9B + Qwen3.5-35B-A3B)
+#   - Skill bank pipeline + RAG (Qwen3-Embedding-0.6B)
 #   - Cold-start data generation & labeling
-#   - Inference and evaluation (vLLM)
-#   - Baselines (OpenRouter API)
-#   - Game environments: 2048, Candy Crush, Tetris, Avalon, Diplomacy
+#   - Baselines (OpenRouter, OpenAI, Anthropic, Google, Together, Z.AI, xAI)
+#   - GamingAgent / LMGame-Bench (2048, plain Tetris)
+#   - gym-v (179 visual envs incl. 13 Temporal/* Sega Genesis games)
+#   - Avalon (PYTHONPATH), Diplomacy
 #
-# NOTE: Super Mario requires a SEPARATE environment (orak-mario).
-#       See install/install_orak_mario.sh.
+# NOT installed here (separate env required):
+#   - Super Mario Bros: install_orak_mario.sh   (nes-py needs numpy<2)
+#   - BrowserGym:       install_browsergym.sh   (playwright==1.44 hard-pin)
+#   - OSWorld:          install_osworld.sh      (gymnasium~=0.28, transformers~=4.35)
+#   - Candy Crush:      tile_match_gym pulls numba → numpy<2 conflict
 #
 # Prerequisites:
 #   - Miniconda3 or Anaconda installed
-#   - CUDA 12.x drivers on the host (for GPU training / vLLM)
-#   - The following repos cloned as siblings under the same parent directory:
-#       Game-AI-Agent/     (this repo)
-#       GamingAgent/       (https://github.com/lmgame-org/GamingAgent)
-#       AgentEvolver/      (https://github.com/modelscope/AgentEvolver)
+#   - CUDA 12.8+ or 13.x driver on the host (for GPU training / vLLM)
+#   - The following repos cloned as siblings under the same parent directory
+#     (the script will offer to clone gym-v if missing):
+#       Multi-hop-Reasoning-VLM-Agent/   (this repo)
+#       GamingAgent/                     (https://github.com/lmgame-org/GamingAgent)
+#       AgentEvolver/                    (https://github.com/modelscope/AgentEvolver)
+#       gym-v/                           (https://github.com/ModalMinds/gym-v)
 #
 # Usage:
 #   cd /path/to/parent           # directory containing all repos
-#   bash Game-AI-Agent/install/install_main_env.sh [CONDA_PATH]
+#   bash Multi-hop-Reasoning-VLM-Agent/install/install_main_env.sh \
+#        [CONDA_PATH] [ROM_ZIP]
+#
+#   CONDA_PATH (optional) — path to the conda binary. Auto-detected if blank.
+#   ROM_ZIP    (optional) — path to a Sega Genesis ROM zip. If provided, the
+#                           script applies install/gymv_temporal_patch/ and
+#                           imports the 13 Temporal/* envs.
 #
 # After install:
 #   conda activate game-ai-agent
-#   export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
-#   cp Game-AI-Agent/.env.example Game-AI-Agent/.env
-#   # Edit .env with your API keys, then:
-#   set -a && source Game-AI-Agent/.env && set +a
+#   export PYTHONPATH=$(pwd)/Multi-hop-Reasoning-VLM-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
+#   cp Multi-hop-Reasoning-VLM-Agent/.env.example Multi-hop-Reasoning-VLM-Agent/.env
+#   set -a && source Multi-hop-Reasoning-VLM-Agent/.env && set +a
 # =============================================================================
 
 set -euo pipefail
@@ -43,9 +54,13 @@ ENV_NAME="game-ai-agent"
 PYTHON_VERSION="3.11"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"          # Game-AI-Agent/
+REPO_DIR="$(dirname "$SCRIPT_DIR")"          # Multi-hop-Reasoning-VLM-Agent/
 PARENT_DIR="$(dirname "$REPO_DIR")"          # parent of all sibling repos
 REQS="${SCRIPT_DIR}/requirements.txt"
+GYMV_DIR="${PARENT_DIR}/gym-v"
+GYMV_PATCH="${SCRIPT_DIR}/gymv_temporal_patch/apply_patch.sh"
+
+ROM_ZIP="${2:-}"                              # optional 2nd positional arg
 
 # ---------------------------------------------------------------------------
 # Locate conda
@@ -69,13 +84,19 @@ PIP="$CONDA_DIR/envs/$ENV_NAME/bin/pip"
 PYTHON="$CONDA_DIR/envs/$ENV_NAME/bin/python"
 
 echo "============================================================"
-echo "  COS-PLAY — Main Environment Installer"
+echo "  Multi-hop-Reasoning-VLM-Agent — Main Environment Installer"
 echo "============================================================"
 echo "  conda:       $CONDA"
 echo "  env name:    $ENV_NAME"
 echo "  python:      $PYTHON_VERSION"
 echo "  repo dir:    $REPO_DIR"
 echo "  parent dir:  $PARENT_DIR"
+echo "  gym-v dir:   $GYMV_DIR"
+if [[ -n "$ROM_ZIP" ]]; then
+    echo "  ROM zip:     $ROM_ZIP   (Temporal/* envs will be enabled)"
+else
+    echo "  ROM zip:     (none)     (gym-v installed without retro games)"
+fi
 echo "============================================================"
 echo
 
@@ -83,48 +104,84 @@ echo
 # Step 1: Create conda environment
 # ---------------------------------------------------------------------------
 if "$CONDA" env list | grep -q "^${ENV_NAME} "; then
-    echo "[1/6] Conda env '$ENV_NAME' already exists — skipping creation."
+    echo "[1/7] Conda env '$ENV_NAME' already exists — skipping creation."
 else
-    echo "[1/6] Creating conda env '$ENV_NAME' with Python $PYTHON_VERSION ..."
+    echo "[1/7] Creating conda env '$ENV_NAME' with Python $PYTHON_VERSION ..."
     "$CONDA" create -n "$ENV_NAME" python="$PYTHON_VERSION" -y
 fi
 echo
 
 # ---------------------------------------------------------------------------
-# Step 2: Install PyTorch with CUDA
+# Step 2: PyTorch is pulled in transitively by vLLM 0.20 (torch==2.11.0+cu130).
+#         The wheels on PyPI ship with CUDA runtime libraries, which work on
+#         any host with a CUDA 12.8+ / 13.x driver (covers H100/H200/B200).
+#         Skipping an explicit `torch` install here avoids pinning a stale
+#         CUDA 12.4 wheel that would then be re-resolved to torch==2.11.0
+#         below and trigger an avoidable re-download.
 # ---------------------------------------------------------------------------
-echo "[2/6] Installing PyTorch with CUDA 12.x ..."
-"$PIP" install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu124
+echo "[2/7] Skipping explicit torch install — vLLM will pull torch==2.11.0+cu130 ..."
 echo
 
 # ---------------------------------------------------------------------------
 # Step 3: Install all pip requirements
 # ---------------------------------------------------------------------------
-echo "[3/6] Installing pip requirements from $REQS ..."
-"$PIP" install --quiet -r "$REQS"
+echo "[3/7] Installing pip requirements from $REQS ..."
+"$PIP" install -r "$REQS"
 echo
 
 # ---------------------------------------------------------------------------
-# Step 4: Install GamingAgent (editable)
+# Step 4: Install GamingAgent (editable). It pins numpy==1.24.4 nominally;
+#         we keep numpy 2.x because vLLM 0.20 / torch 2.11 need it and the
+#         GamingAgent runtime (2048, plain Tetris) is happy on numpy 2.x.
 # ---------------------------------------------------------------------------
-echo "[4/6] Installing GamingAgent ..."
+echo "[4/7] Installing GamingAgent ..."
 if [[ -d "$PARENT_DIR/GamingAgent" ]]; then
-    "$PIP" install --quiet -e "$PARENT_DIR/GamingAgent"
-    echo "  ✓ Installed GamingAgent (editable)"
-    # GamingAgent pins numpy==1.24.4 but works fine with 1.26.4; restore it
-    "$PIP" install --quiet "numpy==1.26.4"
-    echo "  ✓ Restored numpy==1.26.4"
+    "$PIP" install --quiet --no-deps -e "$PARENT_DIR/GamingAgent"
+    echo "  ✓ Installed GamingAgent (editable, --no-deps to avoid numpy downgrade)"
 else
     echo "  ⚠ GamingAgent not found at $PARENT_DIR/GamingAgent"
     echo "    Clone it:  git clone https://github.com/lmgame-org/GamingAgent.git $PARENT_DIR/GamingAgent"
-    echo "    Then run:  $PIP install -e $PARENT_DIR/GamingAgent && $PIP install numpy==1.26.4"
+    echo "    Then run:  $PIP install --no-deps -e $PARENT_DIR/GamingAgent"
 fi
 echo
 
 # ---------------------------------------------------------------------------
-# Step 5: Check AgentEvolver
+# Step 5: Install gym-v (editable). Clone if missing; install with
+#         [games,spatial] extras to enable Games/* + Spatial/* envs.
 # ---------------------------------------------------------------------------
-echo "[5/6] Checking AgentEvolver ..."
+echo "[5/7] Installing gym-v ..."
+if [[ ! -d "$GYMV_DIR" ]]; then
+    echo "  ⓘ gym-v not found at $GYMV_DIR — cloning ..."
+    git clone --depth=1 https://github.com/ModalMinds/gym-v.git "$GYMV_DIR"
+fi
+"$PIP" install --quiet -e "${GYMV_DIR}[games,spatial]"
+echo "  ✓ Installed gym-v editable from $GYMV_DIR (extras: games,spatial)"
+
+if [[ -n "$ROM_ZIP" ]]; then
+    if [[ ! -f "$ROM_ZIP" ]]; then
+        echo "  ⚠ ROM zip not found at $ROM_ZIP — skipping Temporal/* setup."
+    elif [[ ! -x "$GYMV_PATCH" ]]; then
+        echo "  ⚠ gymv_temporal_patch/apply_patch.sh not executable — chmod-ing and retrying ..."
+        chmod +x "$GYMV_PATCH" || true
+    fi
+    if [[ -f "$ROM_ZIP" && -x "$GYMV_PATCH" ]]; then
+        echo "  ⓘ Applying Temporal/* multimodal patch + ROM import ..."
+        # The patch script itself activates the right conda env via PYTHON / PIP it picks up.
+        # We invoke it with the gym-v dir + ROM zip as positional args.
+        bash "$GYMV_PATCH" "$GYMV_DIR" "$ROM_ZIP" || {
+            echo "  ⚠ Temporal/* patch failed — gym-v Games/* and Spatial/* still work."
+        }
+    fi
+else
+    echo "  ⓘ Skipping Temporal/* (no ROM zip provided). To enable later:"
+    echo "      bash $GYMV_PATCH $GYMV_DIR /path/to/Mega_Drive_Mini_Full_Set.zip"
+fi
+echo
+
+# ---------------------------------------------------------------------------
+# Step 6: Check AgentEvolver
+# ---------------------------------------------------------------------------
+echo "[6/7] Checking AgentEvolver ..."
 if [[ -d "$PARENT_DIR/AgentEvolver" ]]; then
     echo "  ✓ AgentEvolver found at $PARENT_DIR/AgentEvolver (added via PYTHONPATH, not pip)"
 else
@@ -134,17 +191,18 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# Step 6: Verify installation
+# Step 7: Verify installation
 # ---------------------------------------------------------------------------
-echo "[6/6] Verifying installation ..."
+echo "[7/7] Verifying installation ..."
 echo
 
 PYTHONPATH="${REPO_DIR}:${PARENT_DIR}/AgentEvolver:${PARENT_DIR}/GamingAgent:${PYTHONPATH:-}" \
 "$PYTHON" -c "
-import sys
+import sys, warnings
+warnings.filterwarnings('ignore')
 
 failures = []
-warnings = []
+warns = []
 
 def check(label, fn, required=True):
     try:
@@ -155,7 +213,7 @@ def check(label, fn, required=True):
             failures.append((label, str(e)))
             print(f'  [FAIL] {label}: {e}')
         else:
-            warnings.append((label, str(e)))
+            warns.append((label, str(e)))
             print(f'  [WARN] {label}: {e}  (optional)')
 
 print(f'Python {sys.version}')
@@ -165,7 +223,7 @@ print()
 print('Core ML:')
 check('numpy',                 lambda: __import__('numpy'))
 check('torch',                 lambda: __import__('torch'))
-check('torch.cuda',            lambda: (t:=__import__('torch'), print(f'           CUDA available: {t.cuda.is_available()}, devices: {t.cuda.device_count()}')))
+check('torch.cuda',            lambda: (t:=__import__('torch'), print(f'           CUDA available: {t.cuda.is_available()}, devices: {t.cuda.device_count()}, version: {t.version.cuda}')))
 check('transformers',          lambda: __import__('transformers'))
 check('peft',                  lambda: __import__('peft'))
 check('safetensors',           lambda: __import__('safetensors'))
@@ -190,6 +248,10 @@ print('API Clients:')
 check('openai',                lambda: __import__('openai'))
 check('anthropic',             lambda: __import__('anthropic'))
 check('google.genai',          lambda: __import__('google.genai'))
+check('google.generativeai',   lambda: __import__('google.generativeai'))
+check('together',              lambda: __import__('together'))
+check('zai',                   lambda: __import__('zai'))
+check('xai_sdk',               lambda: __import__('xai_sdk'))
 print()
 
 # --- Configuration ---
@@ -206,9 +268,27 @@ print()
 
 # --- Game environments ---
 print('Game Environments:')
-check('gymnasium',             lambda: __import__('gymnasium'), required=False)
-check('diplomacy',             lambda: __import__('diplomacy'), required=False)
-check('games.games.avalon',    lambda: __import__('games.games.avalon.engine'), required=False)
+check('gymnasium',             lambda: __import__('gymnasium'))
+check('pygame',                lambda: __import__('pygame'))
+check('gym_v',                 lambda: __import__('gym_v'))
+check('gym_v.envs',            lambda: __import__('gym_v.envs'))
+def _temporal():
+    import gym_v, gym_v.envs
+    n = sum(1 for k in gym_v.registry if k.startswith('Temporal/'))
+    if n == 0:
+        raise RuntimeError('0 Temporal/* envs registered (skip ROM_ZIP step? gym-v Games/Spatial still work)')
+    print(f'           {n} Temporal/* envs registered')
+check('gym_v Temporal/*',      _temporal,                                          required=False)
+check('stable_retro',          lambda: __import__('stable_retro'),                  required=False)
+check('diplomacy',             lambda: __import__('diplomacy'),                     required=False)
+check('games.games.avalon',    lambda: __import__('games.games.avalon.engine'),     required=False)
+print()
+
+# --- env_wrappers (this repo) ---
+print('env_wrappers:')
+check('env_wrappers',          lambda: __import__('env_wrappers'),                  required=False)
+check('env_wrappers.gym_like', lambda: __import__('env_wrappers.gym_like'),         required=False)
+check('env_wrappers.osworld_wrapper', lambda: __import__('env_wrappers.osworld_wrapper'), required=False)
 print()
 
 # --- Logging ---
@@ -216,19 +296,19 @@ print('Logging & Testing:')
 check('loguru',                lambda: __import__('loguru'))
 check('tensorboard',           lambda: __import__('tensorboard'))
 check('pytest',                lambda: __import__('pytest'))
-check('wandb',                 lambda: __import__('wandb'), required=False)
+check('wandb',                 lambda: __import__('wandb'),                         required=False)
 print()
 
 # --- Internal modules ---
 print('Internal Modules:')
-check('trainer.coevolution.config',  lambda: __import__('trainer.coevolution.config'))
-check('trainer.common.metrics',      lambda: __import__('trainer.common.metrics'))
-check('skill_agents.grpo',          lambda: __import__('skill_agents.grpo'))
-check('skill_agents.lora',          lambda: __import__('skill_agents.lora'))
-check('rag.retrieval',              lambda: __import__('rag.retrieval'))
-check('decision_agents',            lambda: __import__('decision_agents'))
-check('data_structure',             lambda: __import__('data_structure'))
-check('API_func',                   lambda: __import__('API_func'))
+check('trainer.coevolution.config',  lambda: __import__('trainer.coevolution.config'),  required=False)
+check('trainer.common.metrics',      lambda: __import__('trainer.common.metrics'),      required=False)
+check('skill_agents.grpo',           lambda: __import__('skill_agents.grpo'),           required=False)
+check('skill_agents.lora',           lambda: __import__('skill_agents.lora'),           required=False)
+check('rag.retrieval',               lambda: __import__('rag.retrieval'),               required=False)
+check('decision_agents',             lambda: __import__('decision_agents'),             required=False)
+check('data_structure',              lambda: __import__('data_structure'),              required=False)
+check('API_func',                    lambda: __import__('API_func'),                    required=False)
 print()
 
 # --- Summary ---
@@ -240,9 +320,9 @@ if failures:
     sys.exit(1)
 else:
     print('All required checks passed.')
-if warnings:
-    print(f'{len(warnings)} optional check(s) skipped (install sibling repos to fix):')
-    for label, err in warnings:
+if warns:
+    print(f'{len(warns)} optional check(s) skipped (install sibling repos / ROMs to fix):')
+    for label, err in warns:
         print(f'  ⚠ {label}')
 print('=' * 50)
 "
@@ -256,21 +336,27 @@ echo "  Activate:"
 echo "    conda activate $ENV_NAME"
 echo
 echo "  Set PYTHONPATH (run from the parent directory of all repos):"
-echo "    export PYTHONPATH=\$(pwd)/Game-AI-Agent:\$(pwd)/AgentEvolver:\$(pwd)/GamingAgent:\$PYTHONPATH"
+echo "    export PYTHONPATH=\$(pwd)/Multi-hop-Reasoning-VLM-Agent:\$(pwd)/AgentEvolver:\$(pwd)/GamingAgent:\$PYTHONPATH"
 echo
 echo "  Set API keys:"
 echo "    cp $REPO_DIR/.env.example $REPO_DIR/.env"
 echo "    # Edit .env with your API keys"
 echo "    set -a && source $REPO_DIR/.env && set +a"
 echo
-echo "  Quick smoke test:"
+echo "  Quick smoke tests:"
 echo "    python -c \"from API_func import api_call; print('API_func OK')\""
-echo "    pytest tests/ -q"
+echo "    python -c \"import gym_v, gym_v.envs; print('Temporal/*:', sum(1 for k in gym_v.registry if k.startswith('Temporal/')))\""
+echo "    python -c \"from env_wrappers.gym_like import make_gaming_env; e=make_gaming_env('twenty_forty_eight'); o=e.reset(); print('2048 OK')\""
+echo "    pytest $REPO_DIR/tests/ -q"
 echo
 echo "  For Super Mario, install the orak-mario env separately:"
 echo "    bash $REPO_DIR/install/install_orak_mario.sh"
 echo
+echo "  For BrowserGym + OSWorld benchmarks (own envs):"
+echo "    bash $REPO_DIR/install/install_browsergym.sh"
+echo "    bash $REPO_DIR/install/install_osworld.sh"
+echo
 echo "  Known nominal warning:"
-echo "    gamingagent 0.1.0 requires numpy==1.24.4 (we use 1.26.4 — works fine)"
+echo "    'gamingagent 0.1.0 requires numpy==1.24.4' — benign; we run numpy 2.x."
 echo
 echo "============================================================"

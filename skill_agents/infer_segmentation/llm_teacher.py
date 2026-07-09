@@ -60,7 +60,7 @@ _global_llm_semaphore = threading.Semaphore(_GLOBAL_MAX_CONCURRENT_LLM_CALLS)
 
 # ── Cold-start I/O recording ─────────────────────────────────────────
 # Every LLM teacher call is recorded so that (prompt, response) pairs
-# can serve as supervised fine-tuning data for Qwen3-8B cold-start,
+# can serve as supervised fine-tuning data for Qwen/Qwen3.5-9B cold-start,
 # and as reference outputs for GRPO reward comparison.
 
 @dataclass
@@ -134,7 +134,7 @@ def _get_ask_model():
     """
     from skill_agents._llm_compat import wrap_ask_for_reasoning_models
 
-    _hint = "Qwen/Qwen3-8B"
+    _hint = "Qwen/Qwen3.5-9B"
     raw_ask = None
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
