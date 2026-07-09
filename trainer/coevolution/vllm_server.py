@@ -290,6 +290,11 @@ class VLLMServerManager:
             # like Qwen3.5-9B that have no FP8 path.  Disable by default;
             # callers can re-enable by exporting VLLM_USE_DEEP_GEMM=1.
             env.setdefault("VLLM_USE_DEEP_GEMM", "0")
+            # Some clusters expose only the CUDA runtime, not the full toolkit
+            # with nvcc.  vLLM's flashinfer sampler may JIT-compile on first
+            # profile_run and fail with "Could not find nvcc"; use vLLM's
+            # built-in sampler unless callers explicitly opt back in.
+            env.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 
             cmd = self._build_serve_cmd(port, lora_modules, shared_gpus)
 
@@ -524,6 +529,8 @@ class VLLMServerManager:
         env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "1"
         env.setdefault("HF_HOME", "/workspace/huggingface")
         env.setdefault("HF_HUB_CACHE", os.path.join(env["HF_HOME"], "hub"))
+        env.setdefault("VLLM_USE_DEEP_GEMM", "0")
+        env.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 
         cmd = self._build_serve_cmd(port, lora_modules, shared_gpus)
 
