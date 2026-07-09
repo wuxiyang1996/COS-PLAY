@@ -1,0 +1,55 @@
+# Canonical domain-ablation matrix for ALFWorld, WebShop, and Candy Crush.
+
+run_root: runs/domain_ablation
+
+domains:
+  candy_crush:
+    runtime_env: cosplay-candy-a100
+    launcher: experiments/domain_ablation/run_candy_crush_ablation.sh
+    setting:
+      total_steps: 10
+      episodes_per_step: 8
+      checkpoint_interval: 1
+      max_steps_per_episode: 50
+      local_gpu_layout:
+        vllm_gpus: [0, 1]
+        grpo_gpus: [2, 3]
+    variants:
+      - name: full
+        purpose: Full contract and learned segmentation system.
+      - name: no_effect_contract
+        purpose: Remove predicate-level effect contracts.
+      - name: raw_delta_contract
+        purpose: Use single start/end predicate delta without consensus.
+      - name: heuristic_only_segmentation
+        purpose: Use heuristic segment boundaries only.
+
+  webshop:
+    runtime_envs:
+      browser: browsergym
+      server: webshop
+      actor: game-ai-agent or compatible vLLM client env
+    launcher: experiments/domain_ablation/run_webshop_ablation.sh
+    setting:
+      default_num_goals: 50
+      episodes_per_task: 1
+      max_steps: 30
+    variants:
+      - name: full
+        purpose: Full BrowserGym/WebShop actor path.
+      - name: no_vision
+        purpose: Disable vision schema call and use heuristic/browser text path.
+
+  alfworld:
+    runtime_env: alfworld
+    launcher: experiments/domain_ablation/run_alfworld_ablation.sh
+    setting:
+      split: eval_out_of_distribution
+      episodes: 8
+      max_steps: 50
+    variants:
+      - name: with_admissible
+        purpose: Include admissible action text in observations.
+      - name: without_admissible
+        purpose: Remove admissible action text from observations.
+

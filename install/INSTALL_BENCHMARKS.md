@@ -12,9 +12,9 @@ on each domain.
 
 ---
 
-## TL;DR — three conda envs, one per runtime family
+## TL;DR — isolated conda envs, one per runtime family
 
-The three interactive runtimes have hard-pinned dependency sets that
+The interactive runtimes have hard-pinned dependency sets that
 cannot co-resolve (gymnasium 0.28 vs 1.2+, transformers 4.35 vs 4.51+,
 playwright pinned to 1.44 for BrowserGym-core). They each get their own
 env. The four **visual-reasoning benchmarks** (TIR-Bench, VisualToolBench,
@@ -38,6 +38,8 @@ EasyOCR, YOLO) used by the offline labeling pipeline.
 | `image_qa` | `game-ai-agent`  | HF `datasets` + cache, local mirror                                 | VisualToolBench + TIR-Bench loaders (`visual_reasoning_wrapper.benchmarks`) |
 | `video_qa` | `game-ai-agent`  | local on-disk videos                                                | Video-Holmes + SIV-Bench loaders (decord-based frame sampling)              |
 | `browser`  | `browsergym`     | [ServiceNow/BrowserGym](https://github.com/ServiceNow/BrowserGym)   | MiniWoB++ / WebArena / VisualWebArena / AssistantBench (2,063 tasks)        |
+| `webshop`  | `webshop` + `browsergym` | [princeton-nlp/WebShop](https://github.com/princeton-nlp/WebShop) | WebShop Flask server driven through BrowserGym via `webshop_wrapper`        |
+| `text_household` | `alfworld` | [alfworld/alfworld](https://github.com/alfworld/alfworld)           | ALFWorld TextWorld household tasks via `env_wrappers.alfworld_nl_wrapper`   |
 | `desktop`  | `osworld`        | [xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld)             | OSWorld desktop runtime (369 Ubuntu + 49 Windows tasks)                     |
 | `grounding`*| `vlm_benchmarks`*| —                                                                  | *Optional* heavy grounding heads (GroundingDINO, OmniParser-v2, Florence-2, EasyOCR) |
 
@@ -66,6 +68,10 @@ env with `pip install --no-deps browsergym-workarena`.
 defined in [`README.md`](README.md). It's listed here only to show why it
 cannot share dependencies with BrowserGym / OSWorld. You install it via
 `install_main_env.sh`, not from this file.
+
+WebShop and ALFWorld are also isolated: WebShop keeps its older Flask/gym
+server stack in `webshop`, while ALFWorld keeps TextWorld/THOR dependencies
+in `alfworld`.
 
 ---
 
@@ -212,9 +218,70 @@ Classifieds Docker images must be hosted separately
 Visual grounding label collection can run against any Playwright page
 without the hosted sites.
 
+COS-PLAY includes a WebArena site launcher for the non-map sites. It writes
+`cold_start/webarena_env.sh` so the BrowserGym launcher can discover local
+site URLs.
+
+```bash
+bash install/install_webarena_sites.sh shopping shopping_admin reddit gitlab wiki homepage
+source cold_start/webarena_env.sh
+bash install/webarena_status.sh
+```
+
 ---
 
-## 3. `desktop` — xlang-ai/OSWorld
+## 3. `webshop` — princeton-nlp/WebShop through BrowserGym
+
+WebShop runs as an isolated Flask server in the `webshop` conda env. COS-PLAY
+then drives it from the `browsergym` env through `webshop_wrapper`, which keeps
+the BrowserGym action/parser/tooling path shared with MiniWoB/WebArena.
+
+```bash
+bash install/install_webshop.sh
+source cold_start/webshop_env.sh
+
+conda activate browsergym
+python -m webshop_wrapper.smoke_axtree --base-url "$WEBSHOP_BASE_URL"
+```
+
+Default mode is the lightweight 1k-product install with a BM25 fallback. Set
+`WEBSHOP_LITE=0` before running the installer if you need the upstream Lucene
++ BERT ranker stack.
+
+---
+
+## 4. `text_household` — ALFWorld
+
+ALFWorld is installed into a separate `alfworld` conda env because its
+TextWorld/THOR stack is independent of both BrowserGym and the main training
+environment.
+
+```bash
+bash install/install_alfworld.sh
+source cold_start/alfworld_env.sh
+
+conda activate alfworld
+python install/alfworld_smoke.py
+```
+
+The default installer uses text mode (`AlfredTWEnv`). To install the visual or
+full THOR stack, run `ALFWORLD_EXTRAS=vis bash install/install_alfworld.sh` or
+`ALFWORLD_EXTRAS=full bash install/install_alfworld.sh`.
+
+Programmatic entrypoint:
+
+```python
+from env_wrappers.alfworld_nl_wrapper import make_alfworld_env
+
+env = make_alfworld_env(split="eval_out_of_distribution")
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step("look")
+env.close()
+```
+
+---
+
+## 5. `desktop` — xlang-ai/OSWorld
 
 ### Install
 
@@ -259,7 +326,7 @@ does not require a VM.
 
 ---
 
-## 4. `image_qa` + `video_qa` — runs inside `game-ai-agent`
+## 6. `image_qa` + `video_qa` — runs inside `game-ai-agent`
 
 The four visual-reasoning benchmarks live in
 [`visual_reasoning_wrapper/benchmarks/`](../visual_reasoning_wrapper/benchmarks/)
@@ -424,7 +491,7 @@ incompatible with `game-ai-agent`'s `transformers 5.6.x` /
 
 ---
 
-## 5. OmniParser-v2 weights (optional, used by Head 3)
+## 7. OmniParser-v2 weights (optional, used by Head 3)
 
 OmniParser-v2 is lazy-loaded by `vlm_wrapper.grounding`. First call
 downloads ~1.5 GB of weights to `~/.cache/omniparser-v2/` (override with
@@ -433,7 +500,7 @@ downloads ~1.5 GB of weights to `~/.cache/omniparser-v2/` (override with
 
 ---
 
-## 6. End-to-end verification
+## 8. End-to-end verification
 
 ```bash
 # Unified path: gym-v + visual-reasoning loaders both live in game-ai-agent
@@ -462,7 +529,7 @@ Each script prints one `[OK] / [FAIL] / [WARN]` line per check.
 
 ---
 
-## 7. Mapping the install to the plan
+## 9. Mapping the install to the plan
 
 | Plan item                                                                       | Status after this doc       |
 |---------------------------------------------------------------------------------|-----------------------------|
@@ -479,7 +546,7 @@ Each script prints one `[OK] / [FAIL] / [WARN]` line per check.
 
 ---
 
-## 8. Troubleshooting
+## 10. Troubleshooting
 
 ### `gym-v` install fails with `gymnasium` not found
 

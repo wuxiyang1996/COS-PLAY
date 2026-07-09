@@ -1,0 +1,30 @@
+# Conda env for ALFWorld.
+#
+# Upstream: https://github.com/alfworld/alfworld
+#
+# The default installer uses the text environment only. Set
+# ALFWORLD_EXTRAS=full when running install/install_alfworld.sh if you need
+# THOR/visual dependencies too.
+#
+# Build:
+#     conda env create -f install/alfworld.environment.yml
+#     conda activate alfworld
+#     pip install "alfworld==0.4.2"
+#     alfworld-download
+#
+# Verify:
+#     python install/alfworld_smoke.py
+
+name: alfworld
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip>=24
+  - pip:
+      - "alfworld==0.4.2"
+      - "gymnasium>=0.28,<1.0"
+      - "numpy<2.0"
+      - "pyyaml>=6.0"
+      - "requests>=2.28"
+      - "tqdm>=4.64"

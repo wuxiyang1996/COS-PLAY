@@ -9,6 +9,7 @@ NL Wrappers:
   - GamingAgentNLWrapper:  GamingAgent / LMGame-Bench (2048, Candy Crush, Tetris)
   - OrakNLWrapper:         Orak environments (Super Mario)
   - OSWorldNLWrapper:      OSWorld desktop automation (Ubuntu/Windows VMs)
+  - ALFWorldNLWrapper:     ALFWorld TextWorld household tasks
   - TetrisMacroWrapper:    Tetris macro-action wrapper (placement-level actions)
 
 Evaluation helpers:
@@ -35,6 +36,12 @@ from env_wrappers.osworld_nl_wrapper import (
     OSWorldNLWrapper,
     obs_to_natural_language as osworld_obs_to_nl,
     build_osworld_state_summary,
+)
+
+from env_wrappers.alfworld_nl_wrapper import (
+    ALFWorldNLWrapper,
+    alfworld_obs_to_natural_language,
+    make_alfworld_env,
 )
 
 from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper as TetrisMacroWrapper
@@ -66,6 +73,10 @@ __all__ = [
     "load_task_catalog",
     "osworld_obs_to_nl",
     "build_osworld_state_summary",
+    # ALFWorld
+    "ALFWorldNLWrapper",
+    "alfworld_obs_to_natural_language",
+    "make_alfworld_env",
     # Tetris Macro
     "TetrisMacroWrapper",
     # Game configs & Gymnasium adapters

@@ -9,7 +9,9 @@ COS-PLAY uses **three core conda environments** (plus one optional add-on for Su
 | Environment | Purpose | Python | Torch / CUDA | Install Time |
 |---|---|---|---|---|
 | **`game-ai-agent`** | GRPO training, vLLM inference, baselines, plus 2048 / Tetris (GamingAgent), Avalon, Diplomacy, **gym-v** (179 visual envs incl. 13 stable-retro Sega Genesis games), and the four **visual-reasoning benchmark loaders** (TIR-Bench, VisualToolBench, Video-Holmes, SIV-Bench) | 3.11 | torch 2.11+cu130 | ~15 min |
-| **`browsergym`** | MiniWoB++ / WebArena / VisualWebArena / AssistantBench (2,063 tasks total) — see [`INSTALL_BENCHMARKS.md`](INSTALL_BENCHMARKS.md) §2 | 3.11 | torch 2.4.1+cu121 | ~10 min |
+| **`browsergym`** | MiniWoB++ / WebArena / VisualWebArena / AssistantBench (2,063 tasks total), plus the COS-PLAY WebShop bridge — see [`INSTALL_BENCHMARKS.md`](INSTALL_BENCHMARKS.md) §2 | 3.11 | torch 2.4.1+cu121 | ~10 min |
+| **`webshop`** | princeton-nlp/WebShop Flask server isolated from BrowserGym; BrowserGym talks to it through `webshop_wrapper` | 3.10 | none by default | ~10 min |
+| **`alfworld`** | ALFWorld TextWorld household tasks via `env_wrappers.alfworld_nl_wrapper`; optional `vis`/`full` install for THOR | 3.9 | none by default | ~10 min + data download |
 | **`osworld`** | OSWorld desktop tasks (369 Ubuntu + 49 Windows examples) — see [`INSTALL_BENCHMARKS.md`](INSTALL_BENCHMARKS.md) §3 | 3.11 | torch 2.5.1+cu124 | ~10 min |
 | **`orak-mario`** *(optional)* | Super Mario Bros — `nes-py` requires `numpy<2` and `gym==0.26.2` so it cannot share `game-ai-agent` | 3.11 | torch latest+cu124 | ~5 min |
 
@@ -55,6 +57,8 @@ bash Multi-hop-Reasoning-VLM-Agent/install/install_main_env.sh \
 # 3. (Optional) Install the visual-grounding benchmark envs
 bash Multi-hop-Reasoning-VLM-Agent/install/install_browsergym.sh
 bash Multi-hop-Reasoning-VLM-Agent/install/install_osworld.sh
+bash Multi-hop-Reasoning-VLM-Agent/install/install_webshop.sh
+bash Multi-hop-Reasoning-VLM-Agent/install/install_alfworld.sh
 
 # 4. (Optional) Install the orak-mario env for Super Mario Bros
 bash Multi-hop-Reasoning-VLM-Agent/install/install_orak_mario.sh
@@ -173,7 +177,7 @@ Full list: [`install/requirements.txt`](requirements.txt)
 
 ---
 
-## 2. Visual-grounding benchmark environments (`browsergym`, `osworld`)
+## 2. Visual-grounding and text benchmark environments (`browsergym`, `webshop`, `webarena`, `alfworld`, `osworld`)
 
 These are interactive runtimes used by the `vlm_wrapper` grounding pipeline and have hard-pinned dependency sets that cannot co-resolve with `game-ai-agent`. Each gets its own conda env.
 
@@ -182,6 +186,23 @@ These are interactive runtimes used by the `vlm_wrapper` grounding pipeline and 
 bash install/install_browsergym.sh
 #   (clones BrowserGym, creates `browsergym` env, pip install editable,
 #    runs `playwright install-deps chromium && playwright install chromium`)
+
+# WebArena self-hosted sites — required for BrowserGym WebArena task execution.
+# This uses Docker images and writes cold_start/webarena_env.sh.
+bash install/install_webarena_sites.sh shopping shopping_admin reddit gitlab wiki homepage
+
+# WebShop — isolated Flask server; BrowserGym drives it through webshop_wrapper.
+bash install/install_webshop.sh
+source cold_start/webshop_env.sh
+conda activate browsergym
+python -m webshop_wrapper.smoke_axtree --base-url "$WEBSHOP_BASE_URL"
+
+# ALFWorld — text-mode household tasks. For visual/THOR mode:
+# ALFWORLD_EXTRAS=vis or ALFWORLD_EXTRAS=full.
+bash install/install_alfworld.sh
+source cold_start/alfworld_env.sh
+conda activate alfworld
+python install/alfworld_smoke.py
 
 # OSWorld  — 369 Ubuntu + 49 Windows tasks (requires Docker / VMware / AWS to actually run)
 bash install/install_osworld.sh
