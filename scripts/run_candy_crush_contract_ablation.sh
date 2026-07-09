@@ -38,9 +38,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORKSPACE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 LAUNCHER="experiments/candy_crush_contract_segmentation_ablation/run_candy_crush_ablation.sh"
+
+# Expose GamingAgent plus its vendored Candy Crush backend.  This avoids
+# installing the external tile_match_gym wheel, which can downgrade numpy and
+# conflict with vLLM.
+export PYTHONPATH="${PROJECT_ROOT}:${WORKSPACE_ROOT}/GamingAgent:${WORKSPACE_ROOT}/GamingAgent/gamingagent/envs/custom_03_candy_crush:${WORKSPACE_ROOT}/AgentEvolver:${WORKSPACE_ROOT}/AI_Diplomacy:${WORKSPACE_ROOT}/Orak:${PYTHONPATH:-}"
 
 VARIANTS="${VARIANTS:-full no_effect_contract raw_delta_contract heuristic_only_segmentation}"
 SEEDS="${SEEDS:-0 1 2}"

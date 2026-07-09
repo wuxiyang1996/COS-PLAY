@@ -45,6 +45,7 @@ bash scripts/run_qwen3_skillbank_agent.sh
 |--------|---------|-------|
 | `run_coevolution.py` | Any (CLI args) | Core training launcher |
 | `run_all.sh` | All 5 games | Curriculum training (sequential phases) |
+| `setup_candy_crush_ablation_env.sh` | Candy Crush | Create/check the conda env for ablation training |
 | `run_2048.sh` | 2048 | SFT warm-start |
 | `run_candy_crush_contract_ablation.sh` | Candy Crush | Contract / segmentation ablations, 4xA100 local setting |
 | `run_tetris.sh` | Tetris | Stability-focused GRPO |
@@ -53,6 +54,19 @@ bash scripts/run_qwen3_skillbank_agent.sh
 | `run_diplomacy.sh` | Diplomacy | 7-player FSDP tuning |
 | `train_avalon_vs_gpt5mini.sh` | Avalon | GPT-5-mini as external opponent |
 | `train_diplomacy_vs_gpt5mini.sh` | Diplomacy | GPT-5-mini as external opponent |
+
+Candy Crush ablations use a dedicated env because existing cluster envs split
+the needed pieces: `vlm_benchmarks` can import the vendored Candy Crush backend
+but lacks vLLM/PEFT, while `swift` has vLLM/PEFT but lacks the game runtime
+deps. To create or check the ablation env:
+
+```bash
+# Create the recommended env.
+bash scripts/setup_candy_crush_ablation_env.sh
+
+# Check an existing env without installing anything.
+CHECK_ONLY=1 ENV_NAME=vlm_benchmarks bash scripts/setup_candy_crush_ablation_env.sh
+```
 
 ```bash
 # Single game
