@@ -8,7 +8,7 @@ game: candy_crush
 default_budget:
   total_steps: 10
   episodes_per_game: 8
-  checkpoint_interval: 3
+  checkpoint_interval: 1
   max_steps_per_episode: 50
   seeds: [0, 1, 2]
 
@@ -27,6 +27,10 @@ shared_controls:
   grpo_clip_ratio: 0.20
   grpo_max_epochs: 4
   grpo_adv_clip: null
+  local_gpu_layout:
+    vllm_gpus: [0, 1]
+    grpo_gpus: [2, 3]
+    gpu_type: A100
 
 variants:
   full:

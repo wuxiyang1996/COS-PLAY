@@ -10,14 +10,16 @@ confounds.
 ## Paper-Matched Setting
 
 The launcher defaults follow the Candy Crush co-evolution setting in
-`EMNLP_2026_Co_evolving_Agent__Copy_.pdf`, Table 4:
+`EMNLP_2026_Co_evolving_Agent__Copy_.pdf`, Table 4, with a local
+checkpoint-frequency override for the current 4xA100 run:
 
 - `total_steps=10`
 - `episodes_per_game=8`
-- `checkpoint_interval=3`
+- `checkpoint_interval=1`
 - `max_steps_per_episode=50` through the existing Candy Crush game config
 - GRPO defaults: learning rate `5e-5`, KL `0.05`, clip ratio `0.20`,
   max epochs `4`, no advantage clipping
+- local GPU layout: vLLM on GPUs `0 1`, GRPO on GPUs `2 3`
 
 ## Core Questions
 

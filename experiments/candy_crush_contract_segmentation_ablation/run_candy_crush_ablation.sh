@@ -13,7 +13,7 @@ cd "$ROOT"
 VARIANT="full"
 TOTAL_STEPS=10
 EPISODES_PER_GAME=8
-CHECKPOINT_INTERVAL=3
+CHECKPOINT_INTERVAL=1
 SEED=0
 RUN_ROOT="runs/candy_crush_contract_segmentation_ablation"
 DRY_RUN=0
