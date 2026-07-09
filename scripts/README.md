@@ -46,6 +46,7 @@ bash scripts/run_qwen3_skillbank_agent.sh
 | `run_coevolution.py` | Any (CLI args) | Core training launcher |
 | `run_all.sh` | All 5 games | Curriculum training (sequential phases) |
 | `run_2048.sh` | 2048 | SFT warm-start |
+| `run_candy_crush_contract_ablation.sh` | Candy Crush | Contract / segmentation ablations, paper-matched setting |
 | `run_tetris.sh` | Tetris | Stability-focused GRPO |
 | `run_super_mario.sh` | Super Mario | Orak subprocess env + Xvfb |
 | `run_avalon.sh` | Avalon | Self-play, conservative GRPO |
