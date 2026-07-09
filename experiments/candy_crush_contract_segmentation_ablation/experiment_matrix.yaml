@@ -1,0 +1,145 @@
+# Canonical Candy Crush ablation matrix.
+#
+# This file is the source of truth for the rebuttal experiment grid.  The
+# `implementation_status` field distinguishes variants that are already
+# exposed by current CLI flags from variants that require a small wiring
+# patch before launch.
+
+game: candy_crush
+default_budget:
+  total_steps: 60
+  episodes_per_game: 8
+  max_steps_per_episode: 50
+  seeds: [0, 1, 2]
+
+shared_controls:
+  actor_model: Qwen/Qwen3.5-9B
+  opponent_model: null
+  curriculum: none
+  bank_mode: per_game
+  harness_enabled: true
+  harness_mode: full
+  crafter_enabled: true
+  promotion_bypass_mode: gated
+  intention_trigger: every-step
+
+variants:
+  full:
+    label: full
+    required: true
+    implementation_status: current_system
+    purpose: Main SkillBridge Candy Crush system.
+    effect_contract:
+      enabled: true
+      source: multi_instance_consensus
+      verification: true
+      refinement: true
+    natural_language_protocol:
+      enabled: true
+    contract_matching:
+      enabled: true
+    contract_completion_reward:
+      enabled: true
+    segmentation:
+      mode: learned_decode
+      learned_scorer: true
+      candidate_boundaries: heuristic_plus_model
+      decoder: dp_or_beam
+
+  no_effect_contract:
+    label: w/o effect contract
+    required: true
+    implementation_status: requires_wiring
+    purpose: Test whether predicate-level effects are necessary.
+    effect_contract:
+      enabled: false
+      source: none
+      verification: false
+      refinement: false
+    natural_language_protocol:
+      enabled: true
+    contract_matching:
+      enabled: false
+    contract_completion_reward:
+      enabled: false
+    segmentation:
+      mode: learned_decode
+      learned_scorer: true
+      candidate_boundaries: heuristic_plus_model
+      decoder: dp_or_beam
+    expected_answer:
+      positive_result: Natural-language protocol may be sufficient.
+      negative_result: Predicate contracts provide needed grounding and verification.
+
+  raw_delta_contract:
+    label: raw delta contract
+    required: true
+    implementation_status: requires_wiring
+    purpose: Test whether contracts are only predicate counting.
+    effect_contract:
+      enabled: true
+      source: single_segment_start_end_delta
+      verification: false
+      refinement: false
+      multi_instance_consensus: false
+      frequency_threshold: null
+    natural_language_protocol:
+      enabled: true
+    contract_matching:
+      enabled: raw_delta_only
+    contract_completion_reward:
+      enabled: false
+    segmentation:
+      mode: learned_decode
+      learned_scorer: true
+      candidate_boundaries: heuristic_plus_model
+      decoder: dp_or_beam
+    expected_answer:
+      positive_result: Predicate-counting baseline is enough for Candy Crush.
+      negative_result: Consensus and verification add value beyond raw counts.
+
+  heuristic_only_segmentation:
+    label: heuristic-only segmentation
+    required: false
+    recommended: true
+    implementation_status: requires_wiring
+    purpose: Test whether learned rollout-to-skill segmentation is core.
+    effect_contract:
+      enabled: true
+      source: multi_instance_consensus
+      verification: true
+      refinement: true
+    natural_language_protocol:
+      enabled: true
+    contract_matching:
+      enabled: true
+    contract_completion_reward:
+      enabled: true
+    segmentation:
+      mode: heuristic_only
+      learned_scorer: false
+      candidate_boundaries: heuristic_only
+      decoder: none
+      llm_preference_teacher: false
+    expected_answer:
+      positive_result: Heuristic segmentation is sufficient on Candy Crush.
+      negative_result: Learned rollout-to-skill segmentation is a core contribution.
+
+metrics:
+  primary:
+    - mean_reward
+    - area_under_reward_curve
+  skill_bank:
+    - n_skills_active
+    - skill_reuse_rate
+    - harness_admit_rate
+    - false_admit_rate
+    - contract_pass_rate
+  segmentation:
+    - segments_per_episode
+    - mean_segment_length
+  cost:
+    - environment_steps
+    - llm_calls
+    - wall_clock_hours
+
