@@ -48,3 +48,8 @@ class Stage3MVPConfig:
     # LLM model for contract summary generation (e.g. "Qwen/Qwen3.5-9B").
     # Empty string = use ask_model default routing (BACKBONE_MODEL).
     model: str = ""
+
+    # Ablation mode for effect contracts.
+    #   consensus_verified: existing multi-instance learn/verify/refine path.
+    #   raw_delta: one representative segment start/end delta, no consensus.
+    contract_mode: str = "consensus_verified"

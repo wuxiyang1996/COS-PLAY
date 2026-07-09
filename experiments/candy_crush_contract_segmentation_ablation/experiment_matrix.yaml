@@ -1,9 +1,8 @@
 # Canonical Candy Crush ablation matrix.
 #
 # This file is the source of truth for the rebuttal experiment grid.  The
-# `implementation_status` field distinguishes variants that are already
-# exposed by current CLI flags from variants that require a small wiring
-# patch before launch.
+# `implementation_status` records whether the launcher variables are wired
+# into the Candy Crush co-evolution skill-bank pipeline.
 
 game: candy_crush
 default_budget:
@@ -49,7 +48,7 @@ variants:
   no_effect_contract:
     label: w/o effect contract
     required: true
-    implementation_status: requires_wiring
+    implementation_status: wired
     purpose: Test whether predicate-level effects are necessary.
     effect_contract:
       enabled: false
@@ -74,7 +73,7 @@ variants:
   raw_delta_contract:
     label: raw delta contract
     required: true
-    implementation_status: requires_wiring
+    implementation_status: wired
     purpose: Test whether contracts are only predicate counting.
     effect_contract:
       enabled: true
@@ -102,7 +101,7 @@ variants:
     label: heuristic-only segmentation
     required: false
     recommended: true
-    implementation_status: requires_wiring
+    implementation_status: wired
     purpose: Test whether learned rollout-to-skill segmentation is core.
     effect_contract:
       enabled: true
@@ -142,4 +141,3 @@ metrics:
     - environment_steps
     - llm_calls
     - wall_clock_hours
-

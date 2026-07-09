@@ -2,9 +2,8 @@
 # Launch or print the Candy Crush contract / segmentation ablation commands.
 #
 # This wrapper intentionally centralizes the rebuttal experiment contract.
-# Variants marked `requires_wiring` in experiment_matrix.yaml export explicit
-# COSPLAY_* environment variables so the small follow-up implementation patch
-# has a stable interface to read from.
+# Variants export explicit COSPLAY_* environment variables that are wired into
+# the Candy Crush co-evolution skill-bank pipeline.
 
 set -euo pipefail
 
@@ -126,4 +125,3 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 exec "${CMD[@]}"
-

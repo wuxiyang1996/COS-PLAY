@@ -45,6 +45,137 @@ from skill_agents.stage3_mvp.schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _heuristic_only_segment_episode(
+    episode: Any,
+    *,
+    skill_names: List[str],
+    env_name: str,
+    game_name: str,
+    proposal_config: Any = None,
+    embedder: Any = None,
+    surprisal: Any = None,
+    outcome_length: int = 5,
+    extractor_kwargs: Optional[dict] = None,
+    skill_tags: Optional[Dict[str, List[str]]] = None,
+) -> Tuple[Any, list]:
+    """Segment with Stage-1 heuristic boundaries only.
+
+    This is the Candy Crush segmentation ablation: no LLM preference
+    teacher, no learned segment scorer, and no DP/beam decoding.
+    Labels are assigned from the same intention-majority relabeling rule
+    used after the learned decoder so downstream skill-bank stages still
+    receive normal ``SegmentRecord`` objects.
+    """
+    from data_structure.experience import SubTask_Experience
+    from skill_agents.boundary_proposal import (
+        candidate_centers_only,
+        propose_from_episode,
+    )
+    from skill_agents.infer_segmentation.diagnostics import (
+        SegmentationResult,
+        SegmentDiagnostic,
+        SkillCandidate,
+    )
+
+    experiences = episode.experiences
+    T = len(experiences)
+    if T == 0:
+        return SegmentationResult(), []
+
+    boundary_candidates = propose_from_episode(
+        episode,
+        env_name=env_name,
+        config=proposal_config,
+        embedder=embedder,
+        surprisal=surprisal,
+        extractor_kwargs=extractor_kwargs,
+    )
+    centers = candidate_centers_only(boundary_candidates)
+    cut_indices = sorted(set([0] + centers + [T - 1]))
+    if len(cut_indices) < 2:
+        cut_indices = [0, T - 1]
+
+    fallback_skill = "__NEW__"
+    for sid in skill_names:
+        if sid not in ("__NEW__", "__EXPLORE__"):
+            fallback_skill = sid
+            break
+
+    segments = []
+    for idx in range(len(cut_indices) - 1):
+        start = cut_indices[idx]
+        end = cut_indices[idx + 1]
+        if start > end:
+            continue
+        segments.append(
+            SegmentDiagnostic(
+                start=start,
+                end=end,
+                assigned_skill=fallback_skill,
+                candidates=[
+                    SkillCandidate(
+                        skill=fallback_skill,
+                        total_score=0.0,
+                        breakdown={"heuristic_only": 1.0},
+                    )
+                ],
+                boundary_confidence=1.0,
+            )
+        )
+    if not segments:
+        segments = [
+            SegmentDiagnostic(
+                start=0,
+                end=T - 1,
+                assigned_skill=fallback_skill,
+                candidates=[
+                    SkillCandidate(
+                        skill=fallback_skill,
+                        total_score=0.0,
+                        breakdown={"heuristic_only": 1.0},
+                    )
+                ],
+                boundary_confidence=1.0,
+            )
+        ]
+
+    result = SegmentationResult(segments=segments, total_score=0.0)
+
+    try:
+        from skill_agents.infer_segmentation.episode_adapter import (
+            _relabel_segments_by_intention,
+        )
+
+        _relabel_segments_by_intention(
+            result, experiences, skill_names, game_name=game_name,
+        )
+    except Exception as exc:
+        logger.debug("heuristic-only intention relabel skipped: %s", exc)
+
+    sub_episodes = []
+    for seg in result.segments:
+        start, end = seg.start, min(seg.end + 1, T)
+        segment_exps = experiences[start:end]
+        outcome_start = end
+        outcome_end = min(end + outcome_length, T)
+        outcome_exps = (
+            experiences[outcome_start:outcome_end]
+            if outcome_start < outcome_end
+            else None
+        )
+        sub_episodes.append(
+            SubTask_Experience(
+                sub_task=seg.assigned_skill,
+                final_goal=episode.task,
+                experiences=segment_exps,
+                outcome=outcome_exps,
+                seg_id=getattr(seg, "seg_id", None),
+            )
+        )
+
+    return result, sub_episodes
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────
@@ -66,6 +197,7 @@ class PipelineConfig:
 
     # Stage 2: segmentation
     segmentation_method: str = "dp"
+    segmentation_mode: str = "learned_decode"  # "learned_decode" | "heuristic_only"
     preference_iterations: int = 3
     margin_threshold: float = 1.0
     max_queries_per_iter: int = 5
@@ -82,6 +214,7 @@ class PipelineConfig:
     contract_feedback_strength: float = 0.3
 
     # Stage 3: contract learning
+    effect_contract_mode: str = "consensus_verified"  # "consensus_verified" | "none" | "raw_delta"
     eff_freq: float = 0.8
     min_instances_per_skill: int = 5
     start_end_window: int = 5
@@ -485,7 +618,20 @@ class SkillBankAgent:
                 except Exception:
                     _bank_skill_scores[sid] = 0.5
 
-        if _skill_names:
+        if cfg.segmentation_mode == "heuristic_only":
+            result, sub_episodes = _heuristic_only_segment_episode(
+                episode,
+                skill_names=_skill_names,
+                env_name=_env,
+                game_name=_game,
+                proposal_config=proposal_config,
+                embedder=embedder,
+                surprisal=surprisal,
+                outcome_length=5,
+                extractor_kwargs=_extractor_kwargs,
+                skill_tags=_skill_tags,
+            )
+        elif _skill_names:
             result, sub_episodes, store = infer_and_segment(
                 episode,
                 skill_names=_skill_names,
@@ -846,7 +992,13 @@ class SkillBankAgent:
             min_instances_per_skill=cfg.min_instances_per_skill,
             start_end_window=cfg.start_end_window,
             model=cfg.llm_model or "",
+            contract_mode=cfg.effect_contract_mode,
         )
+
+        if cfg.effect_contract_mode == "none":
+            logger.info("Stage 3 skipped: effect_contract_mode=none")
+            self._invalidate_query_engine()
+            return Stage3MVPSummary(n_segments=len(self._all_segments))
 
         specs = [
             SegmentSpec(

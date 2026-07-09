@@ -50,6 +50,38 @@ def _readable_name_from_id(skill_id: str) -> str:
     return text.title()
 
 
+def _raw_delta_contract(
+    skill_id: str,
+    instances: List[SegmentRecord],
+    prev_version: int = 0,
+) -> SkillEffectsContract:
+    """Build the raw-delta ablation contract from one segment instance.
+
+    This intentionally does not perform multi-instance consensus,
+    frequency thresholding, verification, or refinement.
+    """
+    rec = instances[0]
+    support = {
+        lit: 1
+        for lit in (
+            set(rec.eff_add or set())
+            | set(rec.eff_del or set())
+            | set(rec.eff_event or set())
+        )
+    }
+    return SkillEffectsContract(
+        skill_id=skill_id,
+        version=prev_version + 1,
+        name=_readable_name_from_id(skill_id),
+        description="Raw single-segment start/end predicate delta.",
+        eff_add=set(rec.eff_add or set()),
+        eff_del=set(rec.eff_del or set()),
+        eff_event=set(rec.eff_event or set()),
+        support=support,
+        n_instances=1,
+    )
+
+
 # ── Segment specification (light input schema) ──────────────────────
 
 @dataclass
@@ -221,6 +253,36 @@ def run_stage3_mvp(
         existing = bank.get_contract(skill_id)
         if existing is not None:
             prev_ver = existing.version
+
+        contract_mode = getattr(config, "contract_mode", "consensus_verified")
+        if contract_mode == "raw_delta":
+            contract = _raw_delta_contract(skill_id, instances, prev_ver)
+            report = VerificationReport(
+                skill_id=skill_id,
+                n_instances=len(instances),
+                overall_pass_rate=0.0,
+            )
+            sr = SkillResult(
+                skill_id=skill_id,
+                contract=contract,
+                report_initial=report,
+                contract_refined=contract,
+                report_refined=report,
+            )
+            skill_results[skill_id] = sr
+            bank.add_or_update(contract, report)
+            summary.skill_results[skill_id] = {
+                "n_instances": len(instances),
+                "n_literals_initial": contract.total_literals,
+                "n_literals_kept": contract.total_literals,
+                "pass_rate": None,
+                "pass_rate_initial": None,
+                "top_failing_literals": [],
+                "worst_segments": [],
+                "contract_mode": "raw_delta",
+            }
+            summary.n_skills_processed += 1
+            continue
 
         contract = learn_effects_contract(skill_id, instances, config, prev_ver)
 

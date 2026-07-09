@@ -128,3 +128,16 @@ Expected interpretation:
 - `run_candy_crush_ablation.sh`: launcher wrapper and CLI contract.
 - `RESULTS_TEMPLATE.md`: table template for recording runs.
 
+## Implementation Hooks
+
+The launcher exports `COSPLAY_CC_EFFECT_CONTRACT_MODE` and
+`COSPLAY_CC_SEGMENTATION_MODE`, which are read by
+`trainer/coevolution/skillbank_pipeline.py` for Candy Crush runs.
+
+- `none`: skips Stage 3 predicate-contract learning, strips loaded
+  contracts from the bank, and leaves natural-language protocols intact.
+- `raw_delta`: writes a contract-shaped record from one segment's raw
+  start/end delta, without consensus, verification, refinement, or
+  contract GRPO reward.
+- `heuristic_only`: uses Stage-1 boundary candidates directly and skips
+  LLM preference collection plus DP/beam segment decoding.

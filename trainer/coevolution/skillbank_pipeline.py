@@ -22,6 +22,72 @@ from trainer.coevolution.episode_runner import EpisodeResult
 logger = logging.getLogger(__name__)
 
 
+def _candy_crush_ablation_modes(game_name: str) -> Dict[str, str]:
+    """Return contract/segmentation ablation modes for Candy Crush only."""
+    if game_name != "candy_crush":
+        return {
+            "effect_contract_mode": "consensus_verified",
+            "segmentation_mode": "learned_decode",
+        }
+
+    effect_mode = os.environ.get(
+        "COSPLAY_CC_EFFECT_CONTRACT_MODE",
+        "consensus_verified",
+    )
+    segmentation_mode = os.environ.get(
+        "COSPLAY_CC_SEGMENTATION_MODE",
+        "learned_decode",
+    )
+
+    effect_aliases = {
+        "consensus_verified": "consensus_verified",
+        "full": "consensus_verified",
+        "none": "none",
+        "off": "none",
+        "raw_delta": "raw_delta",
+    }
+    segmentation_aliases = {
+        "learned_decode": "learned_decode",
+        "full": "learned_decode",
+        "heuristic_only": "heuristic_only",
+    }
+
+    if effect_mode not in effect_aliases:
+        raise ValueError(f"Unknown COSPLAY_CC_EFFECT_CONTRACT_MODE={effect_mode!r}")
+    if segmentation_mode not in segmentation_aliases:
+        raise ValueError(f"Unknown COSPLAY_CC_SEGMENTATION_MODE={segmentation_mode!r}")
+
+    return {
+        "effect_contract_mode": effect_aliases[effect_mode],
+        "segmentation_mode": segmentation_aliases[segmentation_mode],
+    }
+
+
+def _manager_ablation_modes(games: Iterable[str]) -> Dict[str, str]:
+    """Resolve module-level wrapper modes for a manager's active games."""
+    game_set = set(games)
+    if "candy_crush" in game_set:
+        return _candy_crush_ablation_modes("candy_crush")
+    return _candy_crush_ablation_modes("generic")
+
+
+def _strip_effect_contracts_for_ablation(agent: Any) -> int:
+    """Remove predicate contracts while preserving skills/protocols."""
+    bank = getattr(agent, "bank", None)
+    if bank is None:
+        return 0
+    removed = 0
+    for sid in list(getattr(bank, "skill_ids", [])):
+        skill = bank.get_skill(sid) if hasattr(bank, "get_skill") else None
+        if skill is not None and getattr(skill, "contract", None) is not None:
+            skill.contract = None
+            removed += 1
+    reports = getattr(bank, "_reports", None)
+    if isinstance(reports, dict):
+        reports.clear()
+    return removed
+
+
 @dataclass
 class SkillBankUpdateResult:
     accepted: bool = False
@@ -74,6 +140,7 @@ class AsyncSkillBankPipeline:
 
         bank_path = str(Path(self.bank_dir) / "skill_bank.jsonl")
         _teacher_max_tokens_env = os.environ.get("SKILLBANK_LLM_TEACHER_MAX_TOKENS")
+        ablation_modes = _candy_crush_ablation_modes(self.game_name)
         config = PipelineConfig(
             bank_path=bank_path,
             env_name="llm",
@@ -81,6 +148,8 @@ class AsyncSkillBankPipeline:
             llm_model=self.model_name,
             extractor_model=self.model_name,
             segmentation_method="dp",
+            segmentation_mode=ablation_modes["segmentation_mode"],
+            effect_contract_mode=ablation_modes["effect_contract_mode"],
             preference_iterations=1,
             new_skill_penalty=2.0,
             eff_freq=0.5,
@@ -101,6 +170,14 @@ class AsyncSkillBankPipeline:
         if Path(bank_path).exists():
             try:
                 self._agent.load()
+                if ablation_modes["effect_contract_mode"] == "none":
+                    removed = _strip_effect_contracts_for_ablation(self._agent)
+                    if removed:
+                        logger.info(
+                            "Candy Crush no-effect-contract ablation: "
+                            "stripped %d loaded contract(s)",
+                            removed,
+                        )
                 n = len(self._agent.skill_ids)
                 logger.info("Loaded existing skill bank: %d skills", n)
             except Exception as exc:
@@ -719,6 +796,7 @@ class PerGameSkillBankManager:
                 )
 
         self._bank_dir = bank_dir
+        self._games = list(games)
         self._grpo_group_size = grpo_group_size
         self._grpo_buffer: Optional[Any] = None
         self._collected_grpo: Dict[str, List[Dict[str, Any]]] = {
@@ -801,13 +879,16 @@ class PerGameSkillBankManager:
 
         self._grpo_buffer = GRPOBuffer()
         gs = self._grpo_group_size
+        modes = _manager_ablation_modes(getattr(self, "_games", []))
 
-        enable_segment_grpo(
-            buffer=self._grpo_buffer, group_size=gs, temperature=1.0,
-            scorer_factory=grpo_scorer_factory,
-            decode_fn=grpo_decode_fn,
-        )
-        enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
+        if modes["segmentation_mode"] != "heuristic_only":
+            enable_segment_grpo(
+                buffer=self._grpo_buffer, group_size=gs, temperature=1.0,
+                scorer_factory=grpo_scorer_factory,
+                decode_fn=grpo_decode_fn,
+            )
+        if modes["effect_contract_mode"] == "consensus_verified":
+            enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
         enable_curator_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
         logger.info("Contract/Curator reward context is dynamic — set before each LLM call")
         logger.info("Skill-bank GRPO wrappers enabled (G=%d)", gs)
@@ -1349,12 +1430,15 @@ class SharedSkillBankManager:
 
         self._grpo_buffer = GRPOBuffer()
         gs = self._grpo_group_size
-        enable_segment_grpo(
-            buffer=self._grpo_buffer, group_size=gs, temperature=1.0,
-            scorer_factory=grpo_scorer_factory,
-            decode_fn=grpo_decode_fn,
-        )
-        enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
+        modes = _manager_ablation_modes(getattr(self, "_games", []))
+        if modes["segmentation_mode"] != "heuristic_only":
+            enable_segment_grpo(
+                buffer=self._grpo_buffer, group_size=gs, temperature=1.0,
+                scorer_factory=grpo_scorer_factory,
+                decode_fn=grpo_decode_fn,
+            )
+        if modes["effect_contract_mode"] == "consensus_verified":
+            enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
         enable_curator_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
         logger.info("Skill-bank GRPO wrappers enabled (G=%d, shared bank)", gs)
 
