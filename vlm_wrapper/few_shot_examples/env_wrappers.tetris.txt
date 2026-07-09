@@ -1,0 +1,78 @@
+<state>
+domain=gymv
+task=make_gaming_env/tetris
+goal=Classic Tetris. Each macro action commits one piece placement (rotation + column). Clear lines by filling rows; the game ends when the stack reaches the top. Prefer placements that clear lines, avoid creating holes, and keep the stack flat / low.
+step=1
+
+<entities>
+e1[type=region, label=playfield, bid=null, pos=0,0,20,10, ontology=container_entity]
+e2[type=object, label=active_piece_T, bid=null, pos=0,4,2,3, ontology=selectable_entity]
+e3[type=object, label=active_piece_T, bid=null, pos=0,5,1,1, ontology=selectable_entity]
+e4[type=object, label=active_piece_T, bid=null, pos=1,4,1,1, ontology=selectable_entity]
+e5[type=object, label=active_piece_T, bid=null, pos=1,5,1,1, ontology=selectable_entity]
+e6[type=object, label=active_piece_T, bid=null, pos=1,6,1,1, ontology=selectable_entity]
+e7[type=object, label=stack_block_S, bid=null, pos=18,5,1,1, ontology=tracked_entity]
+e8[type=object, label=stack_block_S, bid=null, pos=18,6,1,1, ontology=tracked_entity]
+e9[type=object, label=stack_block_S, bid=null, pos=19,4,1,1, ontology=tracked_entity]
+e10[type=object, label=stack_block_S, bid=null, pos=19,5,1,1, ontology=tracked_entity]
+
+<attributes>
+e1.state=visible
+e2.state=visible
+e7.state=visible
+e8.state=visible
+e9.state=visible
+e10.state=visible
+
+<affordances>
+e2.affords=[select, track, inspect]
+e3.affords=[select, track, inspect]
+e4.affords=[select, track, inspect]
+e5.affords=[select, track, inspect]
+e6.affords=[select, track, inspect]
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e10)
+grouped(e2,e3,e4)
+grouped(e3,e5,e6)
+adjacent(e7,e8)
+adjacent(e7,e10)
+adjacent(e9,e10)
+
+<state_flags>
+progress=0.05
+phase=early
+scene_type=game_play
+error=null
+dialog_open=false
+input_pending=true
+
+<targets>
+target=e2
+blocker=null
+constraint=prefer flat low placement without new holes
+candidate_set=[e2,e7,e8,e9,e10]
+history_anchor=null
+
+<uncertainty>
+e2.pos=medium
+e3.pos=medium
+e4.pos=medium
+e5.pos=medium
+e6.pos=medium
+
+<actions>
+a1=T-up col0 (h=6)
+a2=T-up col1 (h=6)
+a3=T-up col7 (h=6)
+a4=T-right col3 (h=7)
+a5=T-right col4 (h=8)
+</state>

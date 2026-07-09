@@ -1,0 +1,1450 @@
+[
+  {
+    "index": 0,
+    "task_id": "browsergym/assistantbench.test.0",
+    "set": "test_general",
+    "task": "Which \"SmartLess\" episode does not include the names of the guests in the title?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 1,
+    "task_id": "browsergym/assistantbench.test.1",
+    "set": "test_general",
+    "task": "Which wedding venues in Orange County offer an ocean view for the ceremony with seating for guests, and have a rating of at least 4.5 based on a minimum of 50 Google reviews? Consider only venues that function primarily as wedding venues, excluding venues such as clubs and museums.",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 2,
+    "task_id": "browsergym/assistantbench.test.2",
+    "set": "test_general",
+    "task": "I live in Astoria, Queens, and would like to find the closest Greenmarket accessible by subway from the 30th Avenue station, that I can shop at on weekends. Which Greenmarket fits this criteria?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 3,
+    "task_id": "browsergym/assistantbench.test.3",
+    "set": "test_general",
+    "task": "What is the earliest version of the Yoast plugin available on the WordPress plugins website?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on the public WordPress plugins website."
+  },
+  {
+    "index": 4,
+    "task_id": "browsergym/assistantbench.test.4",
+    "set": "test_general",
+    "task": "Which Class of 2024 valedictorians from the top four colleges and universities on the 2024 Best National University Rankings, plan to attend a school outside of the United States after graduation?",
+    "category": "FEASIBLE",
+    "reason": "Information can be gathered from public sources about valedictorians' plans."
+  },
+  {
+    "index": 5,
+    "task_id": "browsergym/assistantbench.test.5",
+    "set": "test_general",
+    "task": "Which store nearest to 5 Brondesbury Road, Maida Vale, sell canned jackfruit?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by searching public websites for local stores."
+  },
+  {
+    "index": 6,
+    "task_id": "browsergym/assistantbench.test.6",
+    "set": "test_general",
+    "task": "How many weeks were the three Beatles albums with the highest ranking in RollingStone magazine\u2019s 500 Greatest Albums of All Time on the Billboard 200 chart? (format the answer as a list of jsons, with the keys: \"album_name\", \u201cbillboard_200_weeks\u201d, \u201crollingstone_album_ranking\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 7,
+    "task_id": "browsergym/assistantbench.test.7",
+    "set": "test_general",
+    "task": "I am a married professional baseball player who files a joint return with their spouse. I am living in Atlanta, Georgia, and make $200,000 a month. I was just traded to a New York baseball team, and my salary is set to increase by 30%. How much more will I earn annually after taxes, according to the",
+    "category": "FEASIBLE",
+    "reason": "The task can be completed by researching tax rates and using a tax calculator."
+  },
+  {
+    "index": 8,
+    "task_id": "browsergym/assistantbench.test.8",
+    "set": "test_general",
+    "task": "If I land at Liberty International airport at 7:45 AM on a Saturday, and wish to take Amtrak to William H. Gray III station in Philadelphia, what are the departure times for the next two direct trains I can take?",
+    "category": "REAL_TIME",
+    "reason": "Train schedules can change frequently and are time-sensitive."
+  },
+  {
+    "index": 9,
+    "task_id": "browsergym/assistantbench.test.9",
+    "set": "test_general",
+    "task": "Of the USA leaders in the executive and legislative branches from both parties, who has the most followers on Twitter?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public Twitter profiles."
+  },
+  {
+    "index": 10,
+    "task_id": "browsergym/assistantbench.test.10",
+    "set": "test_general",
+    "task": "Between which consecutive months did MrBeast's YouTube channel experience the largest decline in view count in 2023?",
+    "category": "FEASIBLE",
+    "reason": "View count data is publicly available on YouTube."
+  },
+  {
+    "index": 11,
+    "task_id": "browsergym/assistantbench.test.11",
+    "set": "test_general",
+    "task": "Which of the following stores sell mens cotton pants with high-rise for under 150$: Spier and Mackay or Suit Supply?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 12,
+    "task_id": "browsergym/assistantbench.test.12",
+    "set": "test_general",
+    "task": "What was the increase in the number of users for the Kansas City Chiefs subreddit page during the 2021/22 NFL regular season?",
+    "category": "FEASIBLE",
+    "reason": "User statistics for subreddits can be found on public web pages."
+  },
+  {
+    "index": 13,
+    "task_id": "browsergym/assistantbench.test.13",
+    "set": "test_general",
+    "task": "What was the increase in the number of users for the Atlanta Braves subreddit page between opening day 2023 and the day after the All-Star Game that same year?",
+    "category": "FEASIBLE",
+    "reason": "User statistics for subreddits can be found on public web pages."
+  },
+  {
+    "index": 14,
+    "task_id": "browsergym/assistantbench.test.14",
+    "set": "test_general",
+    "task": "Which game company, with a popular GOG Galaxy integration on GitHub (over 100 stars), has development offices in NYC?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web searches."
+  },
+  {
+    "index": 15,
+    "task_id": "browsergym/assistantbench.test.15",
+    "set": "test_general",
+    "task": "In 2015, how many named lecturers at the top AI conference, according to the Google Scholar h-index, graduated from an Ivy League college?",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public web sources with effort."
+  },
+  {
+    "index": 16,
+    "task_id": "browsergym/assistantbench.test.16",
+    "set": "test_general",
+    "task": "If I land at Luton at 4:15 AM on a Saturday and wish to take the National Express to Finchley Road, what are the departure times for the next two buses I can take?",
+    "category": "FEASIBLE",
+    "reason": "Departure times for buses can be found on public transport websites."
+  },
+  {
+    "index": 17,
+    "task_id": "browsergym/assistantbench.test.17",
+    "set": "test_general",
+    "task": "Which cutters that worked with Edward Sexton at NUTTER'S currently manage Savile Row houses?",
+    "category": "FEASIBLE",
+    "reason": "Information about cutters and their current management roles can be found on public websites."
+  },
+  {
+    "index": 18,
+    "task_id": "browsergym/assistantbench.test.18",
+    "set": "test_general",
+    "task": "Which of the 2020 PhD Boston University Robotics Lab graduated continued to a post-doc position?",
+    "category": "FEASIBLE",
+    "reason": "Information about graduates and their subsequent positions can be found on public university websites or academic profiles."
+  },
+  {
+    "index": 19,
+    "task_id": "browsergym/assistantbench.test.19",
+    "set": "test_general",
+    "task": "If I arrive by bus at Washington DC Union Station at 11:30 AM on a Friday and want to take a train to Charlottesville, VA, what is the departure times for the first train I can take?",
+    "category": "REAL_TIME",
+    "reason": "The answer depends on the specific date and current train schedule."
+  },
+  {
+    "index": 20,
+    "task_id": "browsergym/assistantbench.test.20",
+    "set": "test_general",
+    "task": "Which players also from Navojoa, Mexico played in Major League Baseball after \u201cFernandomania\u201d, the craze surrounding Los Angeles Dodgers\u2019 pitcher Fernando Valenzuela? (Format the answer as a list of jsons with the keys: \u201cfirst_season\", \"player\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web research."
+  },
+  {
+    "index": 21,
+    "task_id": "browsergym/assistantbench.test.21",
+    "set": "test_general",
+    "task": "Among the player or players that have won the NBA Defensive Player of the Year Award the most times between 2000-2020, how many minutes played did they average per game in each of their winning seasons? (Provide the answer as a list of jsons with the keys: \"player\", \"year\", \"minutes_played\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public sports statistics websites."
+  },
+  {
+    "index": 22,
+    "task_id": "browsergym/assistantbench.test.22",
+    "set": "test_general",
+    "task": "Which mall closest to JFK has the following stores: T-Mobile, Foot Locker, Auntie Anne's, and Panda Express?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with some effort."
+  },
+  {
+    "index": 23,
+    "task_id": "browsergym/assistantbench.test.23",
+    "set": "test_general",
+    "task": "In which month in 2020 did ninja\u2019s Twitch stream experience the largest increase in followers?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with historical data."
+  },
+  {
+    "index": 24,
+    "task_id": "browsergym/assistantbench.test.24",
+    "set": "test_general",
+    "task": "Who are the three Jeopardy! College Championship winners who won the most prize money in other Jeopardy! tournaments, and how much money did they win overall? Please provide the answer as a list of JSONs with the keys 'winner' and 'prize_money (usd)'",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 25,
+    "task_id": "browsergym/assistantbench.test.25",
+    "set": "test_general",
+    "task": "On which cruise ships can I take a 3-5 night river cruise in Europe that includes a port of call in France and allows me to pay with my Marriott Bonvoy points?",
+    "category": "FEASIBLE",
+    "reason": "Information about cruise ships and itineraries is publicly available."
+  },
+  {
+    "index": 26,
+    "task_id": "browsergym/assistantbench.test.26",
+    "set": "test_general",
+    "task": "What was the official state-of-the-art F1 accuracy for HotpotQA in the full-wiki setting and NQ in the short-answer setting on July 2020? (Provide the answer as a list of jsons whose keys are \"dataset\" and \"F1 score\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 27,
+    "task_id": "browsergym/assistantbench.test.27",
+    "set": "test_general",
+    "task": "What was the increase in the number of Instagram followers for Cristiano Ronaldo during the 2022/23 Saudi League season?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web sources with some effort."
+  },
+  {
+    "index": 28,
+    "task_id": "browsergym/assistantbench.test.28",
+    "set": "test_general",
+    "task": "Which tour operator in Husavik offers evening whale watching tours (after 7 p.m.) for under 15,000 KR during the summer?",
+    "category": "FEASIBLE",
+    "reason": "Information about tour operators and their offerings can be found on public websites."
+  },
+  {
+    "index": 29,
+    "task_id": "browsergym/assistantbench.test.29",
+    "set": "test_general",
+    "task": "Which arrondissement in Lyon has the most churches listed on TripAdvisor and what are they? (Provide the answer as a jsom with the keys \"arrondissement\" and \"churches\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 30,
+    "task_id": "browsergym/assistantbench.test.30",
+    "set": "test_general",
+    "task": "In The Ultimate Doom, how much faster are all the Episode 2 single-level UV max records combined compared with the single-segment UV max record of Episode 2?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public speedrunning websites."
+  },
+  {
+    "index": 31,
+    "task_id": "browsergym/assistantbench.test.31",
+    "set": "test_general",
+    "task": "Which tour operator in Maui offers sunset whale watching tours for under $100USD?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with some research."
+  },
+  {
+    "index": 32,
+    "task_id": "browsergym/assistantbench.test.32",
+    "set": "test_general",
+    "task": "I am getting married and want to purchase a custom-made wedding dress in Barcelona. Which of the following shops has a lower maximum price for custom wedding dresses: L'Arca or Aleksandra Budnik Atelier?",
+    "category": "TRANSACTIONAL",
+    "reason": "The task involves purchasing a custom-made wedding dress."
+  },
+  {
+    "index": 33,
+    "task_id": "browsergym/assistantbench.test.33",
+    "set": "test_general",
+    "task": "I am a married woman living in Austin, serving as the head of my household, and I earn $100,000 a month. I have recently received a job offer from an LA-based company, offering a 20% increase in compensation. How much more will I earn annually, after taxes, if I accept this offer?",
+    "category": "FEASIBLE",
+    "reason": "The task can be answered by researching tax rates and calculating the difference in income."
+  },
+  {
+    "index": 34,
+    "task_id": "browsergym/assistantbench.test.34",
+    "set": "test_general",
+    "task": "Which Deli's in Bethpage, NY have a rating of at least 4.0 on Google reviews from over 100 reviewers and offer catering service?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public review websites."
+  },
+  {
+    "index": 35,
+    "task_id": "browsergym/assistantbench.test.35",
+    "set": "test_general",
+    "task": "From the time the Andorran Social Democratic Party first entered the Andorran Parliament up to 2023, in which years was the party with the highest number of votes under the electoral threshold (7.14%) centre-right?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web research."
+  },
+  {
+    "index": 36,
+    "task_id": "browsergym/assistantbench.test.36",
+    "set": "test_general",
+    "task": "Which James Bond movie has the largest difference between its Rotten Tomatoes audience score and Tomatometer score?",
+    "category": "FEASIBLE",
+    "reason": "Rotten Tomatoes scores are publicly available and can be compared."
+  },
+  {
+    "index": 37,
+    "task_id": "browsergym/assistantbench.test.37",
+    "set": "test_general",
+    "task": "What is the rotten tomatoes score for the three Bourne movies with the highest IMDB ranking? (format the answer as a list of jsons, with the keys: \"movie_name\", \"imdb_score\", \"rotten_tomatoes_score\")",
+    "category": "REAL_TIME",
+    "reason": "Rotten Tomatoes scores are time-sensitive and can change frequently."
+  },
+  {
+    "index": 38,
+    "task_id": "browsergym/assistantbench.test.38",
+    "set": "test_general",
+    "task": "Which restaurant in Palermo Soho, Buenos Aires serves gluten-free burgers and also has a vegetarian option?",
+    "category": "FEASIBLE",
+    "reason": "Information about restaurants can be found on public websites."
+  },
+  {
+    "index": 39,
+    "task_id": "browsergym/assistantbench.test.39",
+    "set": "test_general",
+    "task": "Who has more Instagram followers: all the Hemsworth brothers except Chris and Liam, or all the Lawrence brothers except Andrew?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public Instagram profiles."
+  },
+  {
+    "index": 40,
+    "task_id": "browsergym/assistantbench.test.40",
+    "set": "test_general",
+    "task": "I want to fly from Bogota to Chicago with only one stop, not in USA, and no more than 8 hours flight time, what are possible connecting airports?",
+    "category": "FEASIBLE",
+    "reason": "Possible to find connecting airports with public web research."
+  },
+  {
+    "index": 41,
+    "task_id": "browsergym/assistantbench.test.41",
+    "set": "test_general",
+    "task": "What were the highest winnings (Regular-Season play) of the all-time top 4 Jeopardy trivia masters? (Provide the answer as a list of jsons with the keys: \"jeopardy_contestant\" and \"money_won\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 42,
+    "task_id": "browsergym/assistantbench.test.42",
+    "set": "test_general",
+    "task": "Which 2024 autobiographical books were written by Booker Prize winners and recommended by Barnes & Noble?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with some research."
+  },
+  {
+    "index": 43,
+    "task_id": "browsergym/assistantbench.test.43",
+    "set": "test_general",
+    "task": "I want to buy a baseball cap like the Chicago White Sox used in the early 1980s. My head measures 23.9 inches. What size should I buy and how much will it cost? (Assume no special rates. Format the answer as a json with the fields \"size\" and \"cost (usd)\").",
+    "category": "TRANSACTIONAL",
+    "reason": "The task involves purchasing a product."
+  },
+  {
+    "index": 44,
+    "task_id": "browsergym/assistantbench.test.44",
+    "set": "test_general",
+    "task": "Which 2024 parenting books were written by psychologist PhDs and recommended by Amazon editors?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web searches and Amazon recommendations."
+  },
+  {
+    "index": 45,
+    "task_id": "browsergym/assistantbench.test.45",
+    "set": "test_general",
+    "task": "In which hotels in England that have an indoor pool, a rating of 4.5 on Google Maps, and the option to charge an electric vehicle, can I pay with Hilton points?",
+    "category": "REQUIRES_LOGIN",
+    "reason": "Requires access to Hilton account for points redemption."
+  },
+  {
+    "index": 46,
+    "task_id": "browsergym/assistantbench.test.46",
+    "set": "test_general",
+    "task": "Which of the top 5 node packages, based on the number of downloads, utilizes Morgan as its testing framework?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by researching public web sources."
+  },
+  {
+    "index": 47,
+    "task_id": "browsergym/assistantbench.test.47",
+    "set": "test_general",
+    "task": "What is the latest version of \u201crequests\u201d that supports Python 2?",
+    "category": "FEASIBLE",
+    "reason": "The latest version of 'requests' that supports Python 2 can be found on public repositories."
+  },
+  {
+    "index": 48,
+    "task_id": "browsergym/assistantbench.test.48",
+    "set": "test_general",
+    "task": "Which of the Total War games on Steam, released between 2015 and 2020, received positive reviews from at least 85% of the players?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 49,
+    "task_id": "browsergym/assistantbench.test.49",
+    "set": "test_general",
+    "task": "Of all the 2023 papers citing Hochreiter and Schmidhuber's LSTM paper, which contain the word regeneration in the title?",
+    "category": "FEASIBLE",
+    "reason": "Can be answered by searching public web for relevant papers."
+  },
+  {
+    "index": 50,
+    "task_id": "browsergym/assistantbench.test.50",
+    "set": "test_general",
+    "task": "What is the rotten tomatoes score for the three Spiderman movies with the highest IMDB ranking? (format the answer as a list of jsons, with the keys: \"movie_name\", \"imdb_score\", \"rotten_tomatoes_score\")",
+    "category": "REAL_TIME",
+    "reason": "Rotten Tomatoes scores can change frequently and are time-sensitive."
+  },
+  {
+    "index": 51,
+    "task_id": "browsergym/assistantbench.test.51",
+    "set": "test_general",
+    "task": "Which PhD students advised by Standford NLP professors graduated at 2023?",
+    "category": "FEASIBLE",
+    "reason": "Graduation information is publicly available on university websites."
+  },
+  {
+    "index": 52,
+    "task_id": "browsergym/assistantbench.test.52",
+    "set": "test_general",
+    "task": "Among the players who have won the NBA Sixth Man of the Year award the most times, how many games did they start in each of their winning seasons? (Provide the answer as a list of jsons with the keys: \"player\", \"year\", \"games_started\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public sports statistics websites."
+  },
+  {
+    "index": 53,
+    "task_id": "browsergym/assistantbench.test.53",
+    "set": "test_general",
+    "task": "I have a 2-year-old daughter and live in Wallingford, Seattle. What are the tuition fees for a 9-5 daycare center? (Format answers as a list of jsons with the keys: \"daycare_center\" and \"cost_usd\")",
+    "category": "FEASIBLE",
+    "reason": "Tuition fees for daycare centers can be found on public websites."
+  },
+  {
+    "index": 54,
+    "task_id": "browsergym/assistantbench.test.54",
+    "set": "test_general",
+    "task": "What is the RGB value of the red part of the old Ebay.com logo?",
+    "category": "FEASIBLE",
+    "reason": "The RGB value can be found by researching the old Ebay.com logo online."
+  },
+  {
+    "index": 55,
+    "task_id": "browsergym/assistantbench.test.55",
+    "set": "test_general",
+    "task": "I live in France and am taking a trip to the Florida Keys, USA. I want to know how much it would cost me to buy an Aqua Lung mask, snorkel, and fin set in France (either at a shop or by ordering online) or at a shop in the Keys, assuming there are no special sales. (Provide the answer as a list of J",
+    "category": "FEASIBLE",
+    "reason": "Prices can be found on public websites for both locations."
+  },
+  {
+    "index": 56,
+    "task_id": "browsergym/assistantbench.test.56",
+    "set": "test_general",
+    "task": "I want to fly from Seattle to Recife with only one stop, what are the IATA codes of the possible connecting airports?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public flight search websites."
+  },
+  {
+    "index": 57,
+    "task_id": "browsergym/assistantbench.test.57",
+    "set": "test_general",
+    "task": "What are some bakeries in Miami Shores, FL where I can make an order online on Sunday for cupcakes with birthday decorations to be delivered on Tuesday before noon?",
+    "category": "TRANSACTIONAL",
+    "reason": "The task requires making an order online for delivery."
+  },
+  {
+    "index": 58,
+    "task_id": "browsergym/assistantbench.test.58",
+    "set": "test_general",
+    "task": "From the 2000/01 to 2023/24 seasons, which Premier League players won the Golden Boot (scored the most goals in a single season) without being named Player of the Month during that season?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public sports websites."
+  },
+  {
+    "index": 59,
+    "task_id": "browsergym/assistantbench.test.59",
+    "set": "test_general",
+    "task": "Who has more TikTok followers: all the Destiny\u2019s Child members excluding Beyonce, or all the One Direction members excluding Harry Styles?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public profiles on TikTok."
+  },
+  {
+    "index": 60,
+    "task_id": "browsergym/assistantbench.test.60",
+    "set": "test_general",
+    "task": "What florists in Padiham, UK advertise that they are open at 9AM on a Wednesday?",
+    "category": "FEASIBLE",
+    "reason": "Information about local florists' hours can be found on public websites."
+  },
+  {
+    "index": 61,
+    "task_id": "browsergym/assistantbench.test.61",
+    "set": "test_general",
+    "task": "Which rental car places within 10 miles of Larchmont, NY have at least a 4.5 rating on Google Maps, and officially accepts American Express contact-less payments?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 62,
+    "task_id": "browsergym/assistantbench.test.62",
+    "set": "test_general",
+    "task": "I have a 2-year-old son and live in Kirkland, Seattle.  I get out of work at 5PM every day. What are the names of all daycare centers with at least 25 years experience that close at 5:30 PM or later? (Format answers as a list of jsons with the keys: \"daycare_center\" and \"closing_time\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 63,
+    "task_id": "browsergym/assistantbench.test.63",
+    "set": "test_general",
+    "task": "Which malls in Missouri have all of the following stores: H&M, Urban Outfitters, Hollister, and Apple?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with some effort."
+  },
+  {
+    "index": 64,
+    "task_id": "browsergym/assistantbench.test.64",
+    "set": "test_general",
+    "task": "My 10-year-old son wants to take guitar lessons, and we live in the Mission in San Francisco. Where can I find a music school and how much are the weekly lesson fees? (Format answers as a list of jsons with the keys: \"music_school\" and \"cost_usd\". If there are multiple options for a school, provide ",
+    "category": "FEASIBLE",
+    "reason": "Information about music schools and lesson fees is publicly available."
+  },
+  {
+    "index": 65,
+    "task_id": "browsergym/assistantbench.test.65",
+    "set": "test_general",
+    "task": "I want to buy an official jersey for Real Madrid with my name ont he back, the domestic league badge, the number 6. My measurements are 86 cm (chest), 68 cm (waist), and 94 cm (hips). What size should I buy and how much will it cost? (Format the answer as a json with the fields \"size\" and \"cost (usd",
+    "category": "TRANSACTIONAL",
+    "reason": "The task involves purchasing an item."
+  },
+  {
+    "index": 66,
+    "task_id": "browsergym/assistantbench.test.66",
+    "set": "test_general",
+    "task": "Since the year 1984, which NBA team and player has won the most championships and how many? (provide the answer as a dict with they keys \"winner\" and \"num_titles\")",
+    "category": "FEASIBLE",
+    "reason": "The information is publicly available and can be researched."
+  },
+  {
+    "index": 67,
+    "task_id": "browsergym/assistantbench.test.67",
+    "set": "test_general",
+    "task": "After Benjamin Netanyahu, which member of the Knesset has the most followers on Twitter? You can limit your search to politicians who were head of parties in the 2022 elections.",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public websites."
+  },
+  {
+    "index": 68,
+    "task_id": "browsergym/assistantbench.test.68",
+    "set": "test_general",
+    "task": "What is the title of the paper discussing the genetics of blue eye color in cats that was published in 2024?",
+    "category": "REAL_TIME",
+    "reason": "The paper title is time-sensitive and pertains to a future publication."
+  },
+  {
+    "index": 69,
+    "task_id": "browsergym/assistantbench.test.69",
+    "set": "test_general",
+    "task": "Which bars in Wallingford or Fremont, Seattle had a comic themed pinball machine during March 2024? (Provide the answer as a list of jsons with the keys: \"Bar name\", \"Neighborhood\", \"Machine name\")",
+    "category": "REAL_TIME",
+    "reason": "The information is time-sensitive and specific to March 2024."
+  },
+  {
+    "index": 70,
+    "task_id": "browsergym/assistantbench.test.70",
+    "set": "test_general",
+    "task": "Which outlets in Ontario have all of the following stores: Columbia, Lululemon, Ted Baker, and Michael Kors?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public websites."
+  },
+  {
+    "index": 71,
+    "task_id": "browsergym/assistantbench.test.71",
+    "set": "test_general",
+    "task": "Where is the closest indoor Chase ATM to Moscone Center in San Francisco?",
+    "category": "FEASIBLE",
+    "reason": "The location of ATMs can be found on public websites."
+  },
+  {
+    "index": 72,
+    "task_id": "browsergym/assistantbench.test.72",
+    "set": "test_general",
+    "task": "What are the driving theme video games for more than 1 player in arcades located in Logan Square or West Loop in Chicago, present in May 2024?\" (Provide the answer as a list of jsons with the keys: \"Arcade name\", \"Neighborhood\", \"Video game name\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public arcade websites and game listings."
+  },
+  {
+    "index": 73,
+    "task_id": "browsergym/assistantbench.test.73",
+    "set": "test_general",
+    "task": "I want to buy an official jersey of the Atlanta Braves with my name on the back, and the number 7. My measurements are 40IN (chest), 32IN (waist), and 42IN (hips). What size should I buy and how much will it cost? (Format the answer as a json with the fields \"size\" and \"cost (usd)\").",
+    "category": "TRANSACTIONAL",
+    "reason": "The task involves purchasing an item."
+  },
+  {
+    "index": 74,
+    "task_id": "browsergym/assistantbench.test.74",
+    "set": "test_general",
+    "task": "Which Savile Row Member Houses would it have been possible for Henry Jerome de Salis to have shopped at?",
+    "category": "FEASIBLE",
+    "reason": "Savile Row Member Houses are publicly listed and can be researched."
+  },
+  {
+    "index": 75,
+    "task_id": "browsergym/assistantbench.test.75",
+    "set": "test_general",
+    "task": "How many quizzes has each of Sporcle's all-time top 5 trivia masters created? (Provide the answer as a list of jsons with the keys: \"trivia_master\" and \"quizzes_created\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 76,
+    "task_id": "browsergym/assistantbench.test.76",
+    "set": "test_general",
+    "task": "Which affiliated faculty with Harvard University\u2019s Department of Stem Cell and Regenerative Biology do not have their email addresses listed on the HSCRB website but do have a link to their lab?",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public web sources with effort."
+  },
+  {
+    "index": 77,
+    "task_id": "browsergym/assistantbench.test.77",
+    "set": "test_general",
+    "task": "Of all the 2023 paper citing Hochreiter and Schmidhuber's LSTM paper, how many have the word \"RNN\" in the title?",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public academic databases and search engines."
+  },
+  {
+    "index": 78,
+    "task_id": "browsergym/assistantbench.test.78",
+    "set": "test_general",
+    "task": "Which restaurant in Parque de la 93, Bogota, offers organic food and also has vegan options?",
+    "category": "FEASIBLE",
+    "reason": "Information about restaurants can be found on public websites."
+  },
+  {
+    "index": 79,
+    "task_id": "browsergym/assistantbench.test.79",
+    "set": "test_general",
+    "task": "Where is the closest \"Ahuzot HaHof\" parking next to Dizengof Center in Tel Aviv?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 80,
+    "task_id": "browsergym/assistantbench.test.80",
+    "set": "test_general",
+    "task": "What are the nearest Primark stores to each other in London, outside of Soho, based on walking distance?",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public web sources with effort."
+  },
+  {
+    "index": 81,
+    "task_id": "browsergym/assistantbench.test.81",
+    "set": "test_general",
+    "task": "I live at 1095 Capp Street, San Francisco. Today, I want to walk to at least two peaks or hills that are at least 300 feet tall to enjoy the view, while minimizing the amount of walking. Which hills should I visit?",
+    "category": "FEASIBLE",
+    "reason": "The agent can find public information about nearby hills and their heights."
+  },
+  {
+    "index": 82,
+    "task_id": "browsergym/assistantbench.test.82",
+    "set": "test_general",
+    "task": "Which restaurants in Buffalo, New York list gluten-free burgers on the menu options and are priced in the lowest price tier and have at least 15 reviews on findmeglutenfree.com?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on a public website with effort."
+  },
+  {
+    "index": 83,
+    "task_id": "browsergym/assistantbench.test.83",
+    "set": "test_general",
+    "task": "What florists in Bakewell, UK can I make an order online on Tuesday (11:30am) with a personalized note and be sure that it will arrive before Thursday?",
+    "category": "FEASIBLE",
+    "reason": "Information about florists and their online ordering options can be found on public websites."
+  },
+  {
+    "index": 84,
+    "task_id": "browsergym/assistantbench.test.84",
+    "set": "test_general",
+    "task": "Which lists more of Patrick Haffner's publications, Semantic Scholar or Google Scholar?",
+    "category": "FEASIBLE",
+    "reason": "Both platforms are public and can be accessed to compare publication lists."
+  },
+  {
+    "index": 85,
+    "task_id": "browsergym/assistantbench.test.85",
+    "set": "test_general",
+    "task": "How many of Anthony Fauci's 2020 papers are available on PubMed and PMC? (Provide the answer as a list of jsons with the keys \"archive\" and \"number_of_papers\")",
+    "category": "FEASIBLE",
+    "reason": "The number of papers can be found on public databases like PubMed and PMC."
+  },
+  {
+    "index": 86,
+    "task_id": "browsergym/assistantbench.test.86",
+    "set": "test_general",
+    "task": "Among Major League Baseball players with the longest streaks of consecutive Cy Young wins, who was a member of their league's All-Star team the most times during this streak?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web sources with research."
+  },
+  {
+    "index": 87,
+    "task_id": "browsergym/assistantbench.test.87",
+    "set": "test_general",
+    "task": "Which arrondissement in Paris has the most Speakeasy bars?",
+    "category": "FEASIBLE",
+    "reason": "Information about Speakeasy bars in Paris is publicly available."
+  },
+  {
+    "index": 88,
+    "task_id": "browsergym/assistantbench.test.88",
+    "set": "test_general",
+    "task": "I am a single man living in Miami earning $80,000 a year. I have recently received a job offer from a Chicago-based company, offering a 25% increase in compensation. How much more will I earn annually, after taxes, if I accept this offer (according to the Forbes tax calculator)?",
+    "category": "FEASIBLE",
+    "reason": "The task can be completed by researching tax rates and using a tax calculator."
+  },
+  {
+    "index": 89,
+    "task_id": "browsergym/assistantbench.test.89",
+    "set": "test_general",
+    "task": "What is the highest amount of money MrBeast has ever included in the title of one of his videos, considering only titles that explicitly feature the \"$\" symbol?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public websites and analyzing video titles."
+  },
+  {
+    "index": 90,
+    "task_id": "browsergym/assistantbench.test.90",
+    "set": "test_general",
+    "task": "Which official Nina Conti content that is longer than 30 minutes (either a full show or an online series) is available on Youtube?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by searching public websites."
+  },
+  {
+    "index": 91,
+    "task_id": "browsergym/assistantbench.test.91",
+    "set": "test_general",
+    "task": "In which year from 2017 to 2023 did ACL have the highest number of female keynote speakers?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites or conference records."
+  },
+  {
+    "index": 92,
+    "task_id": "browsergym/assistantbench.test.92",
+    "set": "test_general",
+    "task": "Which lists more of Yann Lecun's publications, Semantic Scholar or Google Scholar?",
+    "category": "FEASIBLE",
+    "reason": "Both platforms are public and can be accessed to compare publication lists."
+  },
+  {
+    "index": 93,
+    "task_id": "browsergym/assistantbench.test.93",
+    "set": "test_general",
+    "task": "Which Primark store in London is closest to Hall Place and Gardens based on walking distance?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by searching for Primark locations and calculating distances."
+  },
+  {
+    "index": 94,
+    "task_id": "browsergym/assistantbench.test.94",
+    "set": "test_general",
+    "task": "What are the three most popular official Karlie Kloss cooking videos released before 2020 that focus on savory dishes?",
+    "category": "FEASIBLE",
+    "reason": "The task can be answered by browsing public websites for video content."
+  },
+  {
+    "index": 95,
+    "task_id": "browsergym/assistantbench.test.95",
+    "set": "test_general",
+    "task": "Which NBA player has the most points+blocks in a single season without having ever been on an NBA championship team?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public sports statistics websites."
+  },
+  {
+    "index": 96,
+    "task_id": "browsergym/assistantbench.test.96",
+    "set": "test_general",
+    "task": "What is the HEX code of the Google logo used for the death of Queen Elizabeth II?",
+    "category": "FEASIBLE",
+    "reason": "The HEX code can be found on public websites discussing the Google logo."
+  },
+  {
+    "index": 97,
+    "task_id": "browsergym/assistantbench.test.97",
+    "set": "test_general",
+    "task": "Which 4-star hotels within 1km of the Frankfurt airport have a room for 4 adults?",
+    "category": "TRANSACTIONAL",
+    "reason": "Requires booking a room for 4 adults."
+  },
+  {
+    "index": 98,
+    "task_id": "browsergym/assistantbench.test.98",
+    "set": "test_general",
+    "task": "I am visiting London soon and was looking into issuing a mens Savile Row bespoke suit. Which Savile Row tailors offer fully bespoke three-piece suits for less than 3500\u00a3?",
+    "category": "FEASIBLE",
+    "reason": "Information about Savile Row tailors and their pricing is publicly available."
+  },
+  {
+    "index": 99,
+    "task_id": "browsergym/assistantbench.test.99",
+    "set": "test_general",
+    "task": "Which of Simon Schama's history books are available in Spanish on Kindle?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 100,
+    "task_id": "browsergym/assistantbench.test.100",
+    "set": "test_general",
+    "task": "What car rental agencies near Fishermans Wharf in San Francisco, CA, have electric cars to rent?",
+    "category": "FEASIBLE",
+    "reason": "Information about car rental agencies and their vehicle availability can be found on public websites."
+  },
+  {
+    "index": 101,
+    "task_id": "browsergym/assistantbench.test.101",
+    "set": "test_general",
+    "task": "What is the nearest park to the Tel Aviv Museum of Art that has a dog park and a playground for children?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 102,
+    "task_id": "browsergym/assistantbench.test.102",
+    "set": "test_general",
+    "task": "How many visits did Stack Overflow have in the calendar month before, during, and after the release of ChatGPT? (Provide the answer as a list of jsons with the keys \"month\" and \"monthly_visits\")",
+    "category": "FEASIBLE",
+    "reason": "Monthly visit data can be found on public web analytics sites."
+  },
+  {
+    "index": 103,
+    "task_id": "browsergym/assistantbench.test.103",
+    "set": "test_general",
+    "task": "I want to go fishing in the Finger Lakes, NY. I am looking for a lake that has Atlantic salmon and a brewery very close by or right on the shore with lake views. Which lakes should I consider?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web searches."
+  },
+  {
+    "index": 104,
+    "task_id": "browsergym/assistantbench.test.104",
+    "set": "test_general",
+    "task": "How many players who did not come from colleges were drafted in the first two drafts after Linsanity? (Format the answer as a list of jsons with the keys: \"draft\", \"number_of_players\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web research."
+  },
+  {
+    "index": 105,
+    "task_id": "browsergym/assistantbench.test.105",
+    "set": "test_general",
+    "task": "Which of the following stores have more Magic the Gathering products with a price tag above $500: Walmart or Target?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing the websites of Walmart and Target."
+  },
+  {
+    "index": 106,
+    "task_id": "browsergym/assistantbench.test.106",
+    "set": "test_general",
+    "task": "Which of the players who won the American League Reliever of the Year award between 2014 and 2023 also played as a starting pitcher in their debut season? (Provide the answer as a list of jsons with the keys: \"pitcher\", \u201cteam\", \"games_started\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public sports websites."
+  },
+  {
+    "index": 107,
+    "task_id": "browsergym/assistantbench.test.107",
+    "set": "test_general",
+    "task": "Assuming I live in Paris and am planning a one-week fishing trip to Florida, will it be cheaper to buy a new Eat My Tackle's 50W 2-Speed Twin Drag Reel Blue Marlin Tournament Edition here (either at a shop or ordering online) or in Florida (from the official site), assuming there are no special sale",
+    "category": "FEASIBLE",
+    "reason": "Price comparisons can be made from public websites."
+  },
+  {
+    "index": 108,
+    "task_id": "browsergym/assistantbench.test.108",
+    "set": "test_general",
+    "task": "How many page views did the Centers for Disease Control and Prevention (cdc.gov) have in the calendar month before, during, and after the World Health Organization (WHO) declared COVID-19 a pandemic? (Provide the answer as a list of jsons with the keys \"month\" and \"monthly_views\")",
+    "category": "FEASIBLE",
+    "reason": "Page view data can be found through public web sources with effort."
+  },
+  {
+    "index": 109,
+    "task_id": "browsergym/assistantbench.test.109",
+    "set": "test_general",
+    "task": "Which of the top 5 node packages, based on the number of downloads, utilizes Mocha as its testing framework?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by researching public web sources."
+  },
+  {
+    "index": 110,
+    "task_id": "browsergym/assistantbench.test.110",
+    "set": "test_general",
+    "task": "Which Rolling Stones concert videos can I watch on Amazon Prime Video content that are longer than 2 hours?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by browsing public websites."
+  },
+  {
+    "index": 111,
+    "task_id": "browsergym/assistantbench.test.111",
+    "set": "test_general",
+    "task": "From the time the Sweden Democrats first entered the Swedish Parliament up to 2023, in which years was the party with the highest number of votes under the 4% threshold left-wing?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public election results and historical data."
+  },
+  {
+    "index": 112,
+    "task_id": "browsergym/assistantbench.test.112",
+    "set": "test_general",
+    "task": "Between 2018 and 2023, how many times was one of the top-3 AI conferences, according to the Google Scholar h-index, held in New Orleans?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web research."
+  },
+  {
+    "index": 113,
+    "task_id": "browsergym/assistantbench.test.113",
+    "set": "test_general",
+    "task": "Which restaurants in the Capitol Hill neighborhood take online dinner reservations for a party of 11?",
+    "category": "FEASIBLE",
+    "reason": "Public information about restaurant reservations can be found online."
+  },
+  {
+    "index": 114,
+    "task_id": "browsergym/assistantbench.test.114",
+    "set": "test_general",
+    "task": "Which NBA player has the most blocks+steals in a single season without being selected to an all-defense team that season?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public sports statistics websites."
+  },
+  {
+    "index": 115,
+    "task_id": "browsergym/assistantbench.test.115",
+    "set": "test_general",
+    "task": "Which company had an open-source LLM that scored higher on MMLU on December 1st 2023, Mistral or Meta?",
+    "category": "REAL_TIME",
+    "reason": "The answer is time-sensitive and pertains to a specific date."
+  },
+  {
+    "index": 116,
+    "task_id": "browsergym/assistantbench.test.116",
+    "set": "test_general",
+    "task": "What is the RGB value of the yellow part of the Monday.com logo?",
+    "category": "FEASIBLE",
+    "reason": "The RGB value can be found on public websites or design resources."
+  },
+  {
+    "index": 117,
+    "task_id": "browsergym/assistantbench.test.117",
+    "set": "test_general",
+    "task": "Which bars in Tulsa, Oklahoma had a pinball machine theme based on a rock band or musician during March 2024? (Provide the answer as a list of jsons with the keys: \"Bar name\", \"Neighborhood\", \"Machine name\")",
+    "category": "REAL_TIME",
+    "reason": "The information is time-sensitive and specific to March 2024."
+  },
+  {
+    "index": 118,
+    "task_id": "browsergym/assistantbench.test.118",
+    "set": "test_general",
+    "task": "I want to hike near Marlborough, Connecticut and later attend a wrestling show at the XL Center in Hartford and plan to ride my bike there. What trail is closest to the XL Center with at least 3.5 rating on AllTrails?",
+    "category": "FEASIBLE",
+    "reason": "The task can be completed by searching for hiking trails near Marlborough and checking their ratings on AllTrails."
+  },
+  {
+    "index": 119,
+    "task_id": "browsergym/assistantbench.test.119",
+    "set": "test_general",
+    "task": "Which senior researchers at Oxford University's AI vision lab have their personal email addresses available on their websites?",
+    "category": "REQUIRES_LOGIN",
+    "reason": "Accessing personal email addresses typically requires authenticated access or is not publicly listed."
+  },
+  {
+    "index": 120,
+    "task_id": "browsergym/assistantbench.test.120",
+    "set": "test_general",
+    "task": "Since Larry Bird's retirement, which two Boston Celtics players have provided the most assists for the team? (Provide your answers as a list of jsons with the keys \"player\" and \"number_of_assists\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public sports statistics websites."
+  },
+  {
+    "index": 121,
+    "task_id": "browsergym/assistantbench.test.121",
+    "set": "test_general",
+    "task": "Which of L. Frank Baum\u2019s children\u2019s books are available as French audiobooks?",
+    "category": "FEASIBLE",
+    "reason": "The availability of audiobooks can be found on public websites."
+  },
+  {
+    "index": 122,
+    "task_id": "browsergym/assistantbench.test.122",
+    "set": "test_general",
+    "task": "What was the last Tarantino film that Harvey Keitel was in?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public movie databases or filmography websites."
+  },
+  {
+    "index": 123,
+    "task_id": "browsergym/assistantbench.test.123",
+    "set": "test_general",
+    "task": "Which associate clinical professors in the department that oversees the Laboratory for Clinical Affective Neuroscience have their email addresses listed on the department's website?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on the department's public website."
+  },
+  {
+    "index": 124,
+    "task_id": "browsergym/assistantbench.test.124",
+    "set": "test_general",
+    "task": "What is the closest restaurant outside the San Francisco Zoo that serves lunch and has kids' options on the menu?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with restaurant listings."
+  },
+  {
+    "index": 125,
+    "task_id": "browsergym/assistantbench.test.125",
+    "set": "test_general",
+    "task": "Which of Jeff Wheeler's books are available in German on Kindle?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites like Amazon."
+  },
+  {
+    "index": 126,
+    "task_id": "browsergym/assistantbench.test.126",
+    "set": "test_general",
+    "task": "Which of the first three seasons of South Park has the highest average IMDB episode ranking?",
+    "category": "FEASIBLE",
+    "reason": "Average IMDB episode rankings can be found on public websites."
+  },
+  {
+    "index": 127,
+    "task_id": "browsergym/assistantbench.test.127",
+    "set": "test_general",
+    "task": "Which wedding venues in Netanya offer a view of the Mediterranean, have a rating of at least 4.5 on Google reviews from over 300 reviewers, feature an outdoor area for the reception, and are suitable for 150-250 guests?",
+    "category": "FEASIBLE",
+    "reason": "The information can be gathered from public websites with effort."
+  },
+  {
+    "index": 128,
+    "task_id": "browsergym/assistantbench.test.128",
+    "set": "test_general",
+    "task": "What are the nearest McDonald\u2019s restaurants to each other in San Francisco?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 129,
+    "task_id": "browsergym/assistantbench.test.129",
+    "set": "test_general",
+    "task": "Which restaurants in the Farmingdale, New York neighborhood take online dinner reservations for a party of 10 through Open Table?",
+    "category": "FEASIBLE",
+    "reason": "Public information about restaurants and their reservation options can be found online."
+  },
+  {
+    "index": 130,
+    "task_id": "browsergym/assistantbench.test.130",
+    "set": "test_general",
+    "task": "I want to hike near Jerusalem, and am looking for a loop trail with a waterfall that is less than 5 km long (according to alltrails). What options do I have that also have a winery within a five minutes drive? (Provide the answer as a list of jsons with the keys \"trail\" and \"winery\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 131,
+    "task_id": "browsergym/assistantbench.test.131",
+    "set": "test_general",
+    "task": "Which highly rated (9+ on Booking.com) 5-star hotels closest to Miami Airport have a room for 4 adults?",
+    "category": "TRANSACTIONAL",
+    "reason": "Requires booking a room and checking availability."
+  },
+  {
+    "index": 132,
+    "task_id": "browsergym/assistantbench.test.132",
+    "set": "test_general",
+    "task": "Which store nearest to 5 Brondesbury Road, Maida Vale, sell canned sliced bamboo shoots?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found by searching public websites for local grocery stores."
+  },
+  {
+    "index": 133,
+    "task_id": "browsergym/assistantbench.test.133",
+    "set": "test_general",
+    "task": "Which park is closest to the Rockefeller Archeological Museum and has a playground for children?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web searches."
+  },
+  {
+    "index": 134,
+    "task_id": "browsergym/assistantbench.test.134",
+    "set": "test_general",
+    "task": "Who has more Instagram followers: all the Spice Girls except Victoria, or all the NSYNC members except Justin?",
+    "category": "FEASIBLE",
+    "reason": "The follower counts can be found on public Instagram profiles."
+  },
+  {
+    "index": 135,
+    "task_id": "browsergym/assistantbench.test.135",
+    "set": "test_general",
+    "task": "How many players were drafted right out of high school in the first two drafts after the Latrell Sprewell choking incident happened? (Format the answer as a list of jsons with the keys: \"draft\", \"number_of_players\")",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web research."
+  },
+  {
+    "index": 136,
+    "task_id": "browsergym/assistantbench.test.136",
+    "set": "test_general",
+    "task": "Is it cheaper to buy the complete set of Harry Potter books or the complete set of Game of Thrones books in hardcover on Waterstones UK?",
+    "category": "FEASIBLE",
+    "reason": "Prices for books can be found on public websites."
+  },
+  {
+    "index": 137,
+    "task_id": "browsergym/assistantbench.test.137",
+    "set": "test_general",
+    "task": "Which company had an open-source LLM that scored higher on TruthfulQA on May 1, 2024, Saltlux or Microsoft?",
+    "category": "REAL_TIME",
+    "reason": "The answer is time-sensitive and requires specific data from May 1, 2024."
+  },
+  {
+    "index": 138,
+    "task_id": "browsergym/assistantbench.test.138",
+    "set": "test_general",
+    "task": "Which Rippaverse writers, up to but not including \"Yaira #1,\" have previously worked for the Big Two?",
+    "category": "FEASIBLE",
+    "reason": "Information about Rippaverse writers and their previous work can be found on public websites."
+  },
+  {
+    "index": 139,
+    "task_id": "browsergym/assistantbench.test.139",
+    "set": "test_expert",
+    "task": "Find alleles for SNP rs312262906 used in the Hirisplex panel",
+    "category": "FEASIBLE",
+    "reason": "The information about SNP rs312262906 and its alleles is publicly available."
+  },
+  {
+    "index": 140,
+    "task_id": "browsergym/assistantbench.test.140",
+    "set": "test_expert",
+    "task": "Which EU countries have the largest trade deficit in goods with China in relation to their total trade in 2023?",
+    "category": "FEASIBLE",
+    "reason": "Data on trade deficits is publicly available and can be researched."
+  },
+  {
+    "index": 141,
+    "task_id": "browsergym/assistantbench.test.141",
+    "set": "test_expert",
+    "task": "What articles has writing scholar, Mike Rose, written about issues with writing instruction at the university level? Provide all articles published up to May 2024.",
+    "category": "FEASIBLE",
+    "reason": "Articles can be found through public web searches."
+  },
+  {
+    "index": 142,
+    "task_id": "browsergym/assistantbench.test.142",
+    "set": "test_expert",
+    "task": "On which Brussels KBR collection can I find Miche\u00e1l \u00d3 Cl\u00e9irigh's use of the verbal noun \"tochailt\"?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites related to the KBR collection."
+  },
+  {
+    "index": 143,
+    "task_id": "browsergym/assistantbench.test.143",
+    "set": "test_expert",
+    "task": "How many archaeal and bacterial species were part of the first release of the Taxonomy Genome Database (GTDB)?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites or databases."
+  },
+  {
+    "index": 144,
+    "task_id": "browsergym/assistantbench.test.144",
+    "set": "test_expert",
+    "task": "Who was on the design team for the \"Emerald Screen Pergola\" project?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites."
+  },
+  {
+    "index": 145,
+    "task_id": "browsergym/assistantbench.test.145",
+    "set": "test_expert",
+    "task": "With which companies does Accor Hotels have partnerships to develop tools that measure their sustainability impact?",
+    "category": "FEASIBLE",
+    "reason": "Partnership information is typically available on public websites."
+  },
+  {
+    "index": 146,
+    "task_id": "browsergym/assistantbench.test.146",
+    "set": "test_expert",
+    "task": "Give the top two causes of death of a female aged between 19-49 living in the united kingdom between 2019 and 2020.",
+    "category": "FEASIBLE",
+    "reason": "The information can be found in public health statistics and reports."
+  },
+  {
+    "index": 147,
+    "task_id": "browsergym/assistantbench.test.147",
+    "set": "test_expert",
+    "task": "How many papers about CRISPR/Cas9 can be found in 2023? Round up to the closest 1000.",
+    "category": "FEASIBLE",
+    "reason": "The number of papers can be found through public databases and search engines."
+  },
+  {
+    "index": 148,
+    "task_id": "browsergym/assistantbench.test.148",
+    "set": "test_expert",
+    "task": "Which countries in Asia can the Thalassoma pavo be found in?",
+    "category": "FEASIBLE",
+    "reason": "The information is available on public websites."
+  },
+  {
+    "index": 149,
+    "task_id": "browsergym/assistantbench.test.149",
+    "set": "test_expert",
+    "task": "What is the CVSS score for the latest (until May 2024) critical vulnerability in the OpenSSL library?",
+    "category": "FEASIBLE",
+    "reason": "The CVSS score can be found on public security advisory websites."
+  },
+  {
+    "index": 150,
+    "task_id": "browsergym/assistantbench.test.150",
+    "set": "test_expert",
+    "task": "Find the number of Supreme Court cases related to domestic violence in Slovenia from 1 May 2010 to 1 May 2024.",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public web sources with research."
+  },
+  {
+    "index": 151,
+    "task_id": "browsergym/assistantbench.test.151",
+    "set": "test_expert",
+    "task": "Find the mean terminal elimination half-life of the drug \"Risperidone\" when administered as an intramuscular injection.",
+    "category": "FEASIBLE",
+    "reason": "The information is available on public medical and pharmaceutical websites."
+  },
+  {
+    "index": 152,
+    "task_id": "browsergym/assistantbench.test.152",
+    "set": "test_expert",
+    "task": "What is the sample loading capacity of the 3500xL and SeqStudio flex (Answer with a list of jsons with the keys \"machine\", \"capacity\")",
+    "category": "FEASIBLE",
+    "reason": "The loading capacity can be found on public websites."
+  },
+  {
+    "index": 153,
+    "task_id": "browsergym/assistantbench.test.153",
+    "set": "test_expert",
+    "task": "According to FlyBase, what human diseases are known to be associated with Drosophila melanogaster protein cheerio?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with research effort."
+  },
+  {
+    "index": 154,
+    "task_id": "browsergym/assistantbench.test.154",
+    "set": "test_expert",
+    "task": "What are the key updates to the \"variables\" feature in Figma announced in Dec 2023?",
+    "category": "FEASIBLE",
+    "reason": "Updates can be found on public websites or Figma's official announcements."
+  },
+  {
+    "index": 155,
+    "task_id": "browsergym/assistantbench.test.155",
+    "set": "test_expert",
+    "task": "What was the core demand of aFRR capacity (in MW) in Austria on May 26th 2024?",
+    "category": "REAL_TIME",
+    "reason": "The demand for aFRR capacity is time-sensitive and specific to a future date."
+  },
+  {
+    "index": 156,
+    "task_id": "browsergym/assistantbench.test.156",
+    "set": "test_expert",
+    "task": "What is the exact terminal half-life of the drug \"Lisinopril\"?",
+    "category": "FEASIBLE",
+    "reason": "The terminal half-life of Lisinopril can be found on public medical websites."
+  },
+  {
+    "index": 157,
+    "task_id": "browsergym/assistantbench.test.157",
+    "set": "test_expert",
+    "task": "What poetic movement occurred during the reign of Henry VIII, in England, that included works by Abraham Cowley?",
+    "category": "FEASIBLE",
+    "reason": "The information about poetic movements and historical context is publicly available."
+  },
+  {
+    "index": 158,
+    "task_id": "browsergym/assistantbench.test.158",
+    "set": "test_expert",
+    "task": "When was the initial publication date of statutory KCSIE guidance?",
+    "category": "FEASIBLE",
+    "reason": "The initial publication date of statutory KCSIE guidance is publicly available."
+  },
+  {
+    "index": 159,
+    "task_id": "browsergym/assistantbench.test.159",
+    "set": "test_expert",
+    "task": "How many casualties were in the earthquake in Patras in November 1883?",
+    "category": "FEASIBLE",
+    "reason": "Historical data on casualties is publicly available."
+  },
+  {
+    "index": 160,
+    "task_id": "browsergym/assistantbench.test.160",
+    "set": "test_expert",
+    "task": "What are the highest expressing human cell lines for the Enzyme Responsible for Lactose Degradation in E. coli?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public scientific literature and databases."
+  },
+  {
+    "index": 161,
+    "task_id": "browsergym/assistantbench.test.161",
+    "set": "test_expert",
+    "task": "What is the color code for the color Red Ochre on Le Corbusier?",
+    "category": "FEASIBLE",
+    "reason": "The color code for Red Ochre can be found on public websites."
+  },
+  {
+    "index": 162,
+    "task_id": "browsergym/assistantbench.test.162",
+    "set": "test_expert",
+    "task": "What is the CADD PHRED score for the c.862-10T>C mutation in the human retinoblastoma 1 gene according to Ensembl's Variant Effect Predictor tool?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public web resources with effort."
+  },
+  {
+    "index": 163,
+    "task_id": "browsergym/assistantbench.test.163",
+    "set": "test_expert",
+    "task": "Who created a tool to track tree cover using Landsat data?",
+    "category": "FEASIBLE",
+    "reason": "The information about the tool's creator is likely available on public websites."
+  },
+  {
+    "index": 164,
+    "task_id": "browsergym/assistantbench.test.164",
+    "set": "test_expert",
+    "task": "Based on the usage of b\u00faach\u00e1il in RIA MS C ii 2 f. 15r (15-16th) century, which century does b\u00faachaill start being used to mean 'boy'?",
+    "category": "FEASIBLE",
+    "reason": "The usage of b\u00faach\u00e1il can be researched through historical linguistic sources available online."
+  },
+  {
+    "index": 165,
+    "task_id": "browsergym/assistantbench.test.165",
+    "set": "test_expert",
+    "task": "Obtain the reaction Q value of uranium (230).",
+    "category": "FEASIBLE",
+    "reason": "The reaction Q value of uranium (230) can be found in scientific literature or databases."
+  },
+  {
+    "index": 166,
+    "task_id": "browsergym/assistantbench.test.166",
+    "set": "test_expert",
+    "task": "What are the unit cell parameters of the mineral diopside under P = 2.32 GPa, where its V = 430.513 \u00c53?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found in scientific literature or mineral databases."
+  },
+  {
+    "index": 167,
+    "task_id": "browsergym/assistantbench.test.167",
+    "set": "test_expert",
+    "task": "How many occurrences of Panthera onca have been recorded in Brazil until May 2024?",
+    "category": "FEASIBLE",
+    "reason": "Data on occurrences can be found in public research or wildlife databases."
+  },
+  {
+    "index": 168,
+    "task_id": "browsergym/assistantbench.test.168",
+    "set": "test_expert",
+    "task": "Find primer sequences for D13S317 locus in Identifiler Plus multiplex PCR Kit.",
+    "category": "FEASIBLE",
+    "reason": "Primer sequences for specific loci are typically available in public scientific literature or product documentation."
+  },
+  {
+    "index": 169,
+    "task_id": "browsergym/assistantbench.test.169",
+    "set": "test_expert",
+    "task": "How many publications did Prof Giovanna Mallucci publish in 2023?",
+    "category": "FEASIBLE",
+    "reason": "The number of publications can be found on public academic or research websites."
+  },
+  {
+    "index": 170,
+    "task_id": "browsergym/assistantbench.test.170",
+    "set": "test_expert",
+    "task": "Did India start the 2024 fiscal year off on track for hitting its fiscal deficit goal?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public financial reports and news articles."
+  },
+  {
+    "index": 171,
+    "task_id": "browsergym/assistantbench.test.171",
+    "set": "test_expert",
+    "task": "What is the detection significance of the source NGC 104 in the latest version of the Fermi catalog?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found in public scientific resources or the Fermi catalog."
+  },
+  {
+    "index": 172,
+    "task_id": "browsergym/assistantbench.test.172",
+    "set": "test_expert",
+    "task": "How many articles does the EU directive on combating violence against women and domestic violence released in May 2024 have?",
+    "category": "REAL_TIME",
+    "reason": "The directive is from May 2024, making it time-sensitive."
+  },
+  {
+    "index": 173,
+    "task_id": "browsergym/assistantbench.test.173",
+    "set": "test_expert",
+    "task": "Find the most cited paper on \"selfhood\" published between 2017-May 2024?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found through public academic databases and citation indexes."
+  },
+  {
+    "index": 174,
+    "task_id": "browsergym/assistantbench.test.174",
+    "set": "test_expert",
+    "task": "How many United Nations member states have not ratified the Paris Agreement by Jan 2023?",
+    "category": "FEASIBLE",
+    "reason": "The information is publicly available and can be researched."
+  },
+  {
+    "index": 175,
+    "task_id": "browsergym/assistantbench.test.175",
+    "set": "test_expert",
+    "task": "What is the Sound Absorption Coefficient of a 1\u2033 panel of Acoustical Surfaces' Echo Eliminator\u2122 (product) for sounds of 125Hz?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public websites with effort."
+  },
+  {
+    "index": 176,
+    "task_id": "browsergym/assistantbench.test.176",
+    "set": "test_expert",
+    "task": "Which part of the Local Government Act 1972 covers the filling of casual vacancies for parish councils?",
+    "category": "FEASIBLE",
+    "reason": "The information is available in public legal documents."
+  },
+  {
+    "index": 177,
+    "task_id": "browsergym/assistantbench.test.177",
+    "set": "test_expert",
+    "task": "Which dataset in GBIF has the most sightings for Thalassoma Pavo?",
+    "category": "FEASIBLE",
+    "reason": "The information can be found on public web resources related to GBIF datasets."
+  },
+  {
+    "index": 178,
+    "task_id": "browsergym/assistantbench.test.178",
+    "set": "test_expert",
+    "task": "Compute the average annual temperature in Arizona over 1994-2024 using historical climate data.",
+    "category": "FEASIBLE",
+    "reason": "Historical climate data is publicly available."
+  },
+  {
+    "index": 179,
+    "task_id": "browsergym/assistantbench.test.179",
+    "set": "test_expert",
+    "task": "Which papers published in 2023 have used RNNs to process extremely long texts (tens of thousands of tokens), and evaluated on long-text benchmarks instead of just evaluating perplexity?",
+    "category": "FEASIBLE",
+    "reason": "Research papers can be found on public websites and databases."
+  },
+  {
+    "index": 180,
+    "task_id": "browsergym/assistantbench.test.180",
+    "set": "test_expert",
+    "task": "What is the peak performance age for male athletes in decathlon?",
+    "category": "FEASIBLE",
+    "reason": "The peak performance age for male decathletes can be found in public sports research and articles."
+  }
+]

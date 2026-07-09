@@ -1,0 +1,1169 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Evaluate Qwen3-8B as a decision agent on GamingAgent (LMGame-Bench) games.
+
+Uses the GamingAgentNLWrapper + gym_like env from env_wrappers,
+and calls get_state_summary / infer_intention from decision_agents.agent_helper
+at every step so that rollouts contain rich intention + summary fields.
+
+Supported games: twenty_forty_eight, candy_crush, tetris (LMGame-Bench),
+super_mario (Orak).
+
+Output is saved in Episode / Experience format (data_structure.experience) to:
+    Game-AI-Agent/output/<model_name>/<game_name>/<YYYYMMDD_HHMMSS>/
+        episode_NNN.json        Per-episode JSON
+        episode_buffer.json     All episodes in Episode_Buffer format
+        rollouts.jsonl          Append-friendly JSONL
+        rollout_summary.json    Per-game run stats
+
+Storage layout is model/game/timestamp (timestamp = run start), e.g.:
+    output/Qwen3-8B/twenty_forty_eight/20260312_143025/episode_000.json
+
+Requirements:
+    - A vLLM server serving Qwen/Qwen3-8B on an OpenAI-compatible endpoint.
+      Set VLLM_BASE_URL env var (default: http://localhost:8000/v1).
+    - GamingAgent repo on PYTHONPATH.
+
+Usage (from Game-AI-Agent root):
+
+    export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
+    export VLLM_BASE_URL="http://localhost:8000/v1"
+
+    # Single game, 3 episodes
+    python -m inference.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
+
+    # All available games, 10 episodes each
+    python -m inference.run_qwen3_8b_eval --episodes 10
+
+    # Resume an interrupted run
+    python -m inference.run_qwen3_8b_eval --resume
+
+    # With labeling (generates summary/intentions via LLM for each experience)
+    python -m inference.run_qwen3_8b_eval --label --label_model gpt-4o-mini
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).resolve().parent
+CODEBASE_ROOT = SCRIPT_DIR.parent
+GAMINGAGENT_ROOT = CODEBASE_ROOT.parent / "GamingAgent"
+
+for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
+    if Path(p).exists() and p not in sys.path:
+        sys.path.insert(0, p)
+
+# ---------------------------------------------------------------------------
+# Imports
+# ---------------------------------------------------------------------------
+from data_structure.experience import Experience, Episode, Episode_Buffer
+
+from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
+from env_wrappers.gym_like import make_gaming_env, list_games
+from env_wrappers.game_configs import GAME_CONFIGS
+
+from decision_agents.agent_helper import (
+    get_state_summary,
+    infer_intention,
+    strip_think_tags,
+    build_rag_summary,
+    HARD_SUMMARY_CHAR_LIMIT,
+)
+from decision_agents.dummy_agent import (
+    detect_game,
+    extract_action,
+    _default_action,
+    _parse_valid_actions_from_state,
+    GAME_GAMINGAGENT,
+)
+from decision_agents.agent_helper import (
+    select_skill_from_bank,
+    skill_bank_to_text,
+)
+
+try:
+    from API_func import ask_model, ask_vllm
+except ImportError:
+    ask_model = None
+    ask_vllm = None
+
+# Skill bank loading — reuse the same function as run_inference.py
+from skill_agents.skill_bank.bank import SkillBankMVP
+
+try:
+    from skill_agents.query import SkillQueryEngine
+except ImportError:
+    SkillQueryEngine = None
+
+# --- Additional environment wrappers (Orak) ---
+try:
+    from env_wrappers.orak_nl_wrapper import make_orak_env, ORAK_GAMES
+except ImportError:
+    make_orak_env = None  # type: ignore[assignment]
+    ORAK_GAMES = {}  # type: ignore[assignment]
+
+try:
+    from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
+except ImportError:
+    TetrisMacroActionWrapper = None  # type: ignore[assignment,misc]
+
+# Per-game dependency probes for Orak games that need specific conda envs.
+# super_mario runs as a subprocess via ORAK_PYTHON (orak-mario env), so we
+# only need the binary to exist — gym-super-mario-bros is NOT required in
+# the current process.
+import os as _os
+_ORAK_GAME_AVAILABLE: Dict[str, bool] = {}
+_orak_python = _os.environ.get("ORAK_PYTHON", "")
+if _orak_python and _os.path.isfile(_orak_python) and _os.access(_orak_python, _os.X_OK):
+    _ORAK_GAME_AVAILABLE["super_mario"] = True
+else:
+    try:
+        import gym_super_mario_bros  # noqa: F401
+        _ORAK_GAME_AVAILABLE["super_mario"] = True
+    except ImportError:
+        _ORAK_GAME_AVAILABLE["super_mario"] = False
+
+# ---------------------------------------------------------------------------
+# Qwen3-8B model defaults
+# ---------------------------------------------------------------------------
+DEFAULT_MODEL = "Qwen/Qwen3-8B"
+
+# ---------------------------------------------------------------------------
+# Game categories for routing
+# ---------------------------------------------------------------------------
+LMGAME_BENCH_NAMES = {"twenty_forty_eight", "candy_crush", "tetris"}
+ORAK_EVAL_GAME_NAMES = {"super_mario"}
+
+ORAK_EVAL_INFO: Dict[str, Dict[str, Any]] = {
+    "super_mario": {
+        "task": "Advance Mario as far right as possible. Score = x_pos / 3161 * 100.",
+        "max_steps": 100,
+        "display_name": "Super Mario (Orak)",
+    },
+}
+
+def load_skill_bank(
+    bank_path: str,
+    *,
+    use_query_engine: bool = True,
+) -> Tuple[Any, Any]:
+    """Load a SkillBankMVP from a JSONL file or directory.
+
+    Same logic as inference/run_inference.py — ensures GPT and Qwen paths
+    load and query the skill bank identically.
+    """
+    bp = Path(bank_path)
+    if bp.is_dir():
+        candidates = ["bank.jsonl", "skill_bank.jsonl"]
+        jsonl = None
+        for c in candidates:
+            if (bp / c).exists():
+                jsonl = bp / c
+                break
+        if jsonl is None:
+            jsonls = sorted(bp.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+            jsonl = jsonls[0] if jsonls else None
+        if jsonl is None:
+            print(f"[load_skill_bank] WARNING: no .jsonl found in {bp}, using empty bank.")
+            return None, None
+        bp = jsonl
+
+    bank = SkillBankMVP(path=str(bp))
+    bank.load()
+    print(f"[load_skill_bank] Loaded {len(bank)} skills from {bp}")
+
+    engine = None
+    if use_query_engine and SkillQueryEngine is not None and len(bank) > 0:
+        try:
+            engine = SkillQueryEngine(bank)
+            print(f"[load_skill_bank] SkillQueryEngine initialised")
+        except Exception as exc:
+            print(f"[load_skill_bank] SkillQueryEngine init failed: {exc}")
+    return bank, engine
+
+
+def get_skill_guidance(
+    skill_bank: Any,
+    state_text: str,
+    game_name: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Query the skill bank for guidance, using the same select_skill_from_bank
+    function as VLMDecisionAgent.
+
+    Returns the guidance dict (with protocol, micro_plan, etc.) or None.
+    """
+    if skill_bank is None:
+        return None
+    key = state_text[:500]
+    try:
+        result = select_skill_from_bank(skill_bank, key, top_k=1)
+        if result and result.get("skill_id"):
+            # Enrich with skill name / description if missing (SkillQueryEngine
+            # returns a minimal dict; ensure both paths produce identical fields)
+            if not result.get("skill_name"):
+                underlying = (
+                    getattr(skill_bank, "_bank", None)
+                    or getattr(skill_bank, "bank", None)
+                    or skill_bank
+                )
+                if hasattr(underlying, "get_skill"):
+                    skill_obj = underlying.get_skill(result["skill_id"])
+                    if skill_obj:
+                        result["skill_name"] = skill_obj.name or result["skill_id"]
+                        if not result.get("execution_hint"):
+                            result["execution_hint"] = skill_obj.strategic_description or ""
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def format_skill_guidance_for_prompt(guidance: Optional[Dict[str, Any]]) -> str:
+    """Format skill guidance as text to inject into LLM prompts.
+
+    Produces the same information that VLMDecisionAgent._format_active_skill()
+    exposes, so both GPT and Qwen see identical skill context.
+    """
+    if guidance is None or not guidance.get("skill_id"):
+        return ""
+
+    parts = [f"\n--- Active Skill: {guidance.get('skill_name', guidance['skill_id'])} ---"]
+    if guidance.get("execution_hint"):
+        parts.append(f"  Strategy: {guidance['execution_hint'][:120]}")
+
+    protocol = guidance.get("protocol", {})
+    steps = protocol.get("steps", []) if isinstance(protocol, dict) else []
+    if steps:
+        parts.append(f"  Plan ({len(steps)} steps):")
+        for i, step in enumerate(steps[:5], 1):
+            parts.append(f"    {i}. {step}")
+
+    preconditions = protocol.get("preconditions", []) if isinstance(protocol, dict) else []
+    if preconditions:
+        parts.append(f"  When: {'; '.join(preconditions[:2])}")
+
+    success = protocol.get("success_criteria", []) if isinstance(protocol, dict) else []
+    if success:
+        parts.append(f"  Done when: {'; '.join(success[:2])}")
+
+    abort = protocol.get("abort_criteria", []) if isinstance(protocol, dict) else []
+    if abort:
+        parts.append(f"  Abort if: {'; '.join(abort[:2])}")
+
+    if guidance.get("failure_modes"):
+        parts.append(f"  Watch for: {'; '.join(guidance['failure_modes'][:2])}")
+
+    parts.append("--- end skill ---\n")
+    return "\n".join(parts)
+
+
+QWEN_SYSTEM_PROMPT = (
+    "You are an expert game-playing agent powered by Qwen3-8B.\n"
+    "You receive a textual description of the current game state and must choose exactly one action.\n\n"
+    "Before choosing, briefly reason about:\n"
+    "1. Key elements of the current state (key=value facts).\n"
+    "2. Your immediate [TAG] sub-goal (e.g. [MERGE] Combine tiles, [CLEAR] Remove rows, [SURVIVE] Avoid loss).\n"
+    "3. Which valid action best achieves that sub-goal.\n\n"
+    "Output format (strict):\n"
+    "REASONING: <1-2 sentences of chain-of-thought>\n"
+    "ACTION: <exact action name from the valid actions list>\n"
+)
+
+QWEN_USER_TEMPLATE = (
+    "Game state:\n\n{state}\n\n"
+    "Valid actions: {actions}\n\n"
+    "Think step-by-step, then choose one action using the format above."
+)
+
+# --- Orak (Super Mario) ---
+QWEN_ORAK_SYSTEM = (
+    "You are an expert game-playing agent powered by Qwen3-8B.\n"
+    "You receive a textual description of the current game state and must choose exactly one action.\n\n"
+    "Before choosing, briefly reason about:\n"
+    "1. Key elements of the current state (key=value facts).\n"
+    "2. Your immediate [TAG] sub-goal (e.g. [NAVIGATE] Reach flag, [COLLECT] Get coin, [SURVIVE] Avoid enemy).\n"
+    "3. Which valid action best achieves that sub-goal.\n\n"
+    "Output format (strict):\n"
+    "REASONING: <1-2 sentences of chain-of-thought>\n"
+    "ACTION: <exact action name from the valid actions list>"
+)
+
+QWEN_ORAK_USER = (
+    "Game state:\n\n{state}\n\n"
+    "Valid actions: {actions}\n\n"
+    "Think step-by-step, then choose one action using the format above."
+)
+
+
+# ---------------------------------------------------------------------------
+# Qwen3-8B action function
+# ---------------------------------------------------------------------------
+
+def _parse_qwen_response(reply: str, valid_actions: List[str]) -> Tuple[str, Optional[str]]:
+    """Parse Qwen response to extract action and reasoning.
+
+    Handles ``<think>...</think>`` blocks emitted by reasoning models.
+    """
+    if not reply:
+        return (valid_actions[0] if valid_actions else "stay"), None
+
+    cleaned = strip_think_tags(reply)
+    if not cleaned:
+        cleaned = reply
+
+    reasoning = None
+
+    reasoning_m = re.search(r"REASONING\s*:\s*(.+?)(?=\nACTION|\Z)", cleaned, re.DOTALL | re.IGNORECASE)
+    if reasoning_m:
+        reasoning = reasoning_m.group(1).strip()
+
+    action_m = re.search(r"ACTION\s*:\s*(\S+.*)", cleaned, re.IGNORECASE)
+    if action_m:
+        raw_action = action_m.group(1).strip().lower()
+        lower_map = {a.lower(): a for a in valid_actions}
+        canonical = lower_map.get(raw_action)
+        if canonical:
+            return canonical, reasoning
+
+    extracted = extract_action(cleaned, GAME_GAMINGAGENT, "Valid actions: " + ", ".join(valid_actions))
+    if extracted:
+        return extracted, reasoning
+
+    return (valid_actions[0] if valid_actions else "stay"), reasoning
+
+
+def qwen3_agent_action(
+    state_nl: str,
+    action_names: List[str],
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Query Qwen3-8B via vLLM. Returns (action, reasoning)."""
+    if ask_model is None:
+        return (action_names[0] if action_names else "stay"), None
+
+    user_content = QWEN_USER_TEMPLATE.format(
+        state=state_nl,
+        actions=", ".join(action_names),
+    )
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_SYSTEM_PROMPT + skill_text + "\n" + user_content
+
+    try:
+        reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1024)
+        if reply and not reply.startswith("Error"):
+            return _parse_qwen_response(reply, action_names)
+    except Exception as exc:
+        print(f"    [WARN] Qwen3-8B call failed ({exc}), using fallback")
+
+    return (action_names[0] if action_names else "stay"), None
+
+
+# ---------------------------------------------------------------------------
+# Orak (Super Mario): Qwen3 action
+# ---------------------------------------------------------------------------
+
+def qwen3_orak_action(
+    state_nl: str,
+    action_names: List[str],
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Query Qwen3-8B for one Orak game step. Returns (action, reasoning)."""
+    if ask_model is None:
+        return (action_names[0] if action_names else "stay"), None
+
+    user_content = QWEN_ORAK_USER.format(
+        state=state_nl,
+        actions=", ".join(action_names),
+    )
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_ORAK_SYSTEM + skill_text + "\n" + user_content
+
+    try:
+        reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1024)
+        if reply and not reply.startswith("Error"):
+            return _parse_qwen_response(reply, action_names)
+    except Exception as exc:
+        print(f"    [WARN] Orak Qwen3 call failed ({exc}), using fallback")
+
+    return (action_names[0] if action_names else "stay"), None
+
+
+# ---------------------------------------------------------------------------
+# Episode runner: LMGame-Bench (with intention + summary)
+# ---------------------------------------------------------------------------
+
+def run_qwen3_episode(
+    game: str,
+    max_steps: int,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    verbose: bool = False,
+    label: bool = True,
+    label_model: Optional[str] = None,
+    skill_bank: Any = None,
+) -> Tuple[Episode, Dict[str, Any]]:
+    """Run one episode with Qwen3-8B, calling get_state_summary and
+    infer_intention at every step."""
+
+    game_cfg = GAME_CONFIGS.get(game)
+    task = game_cfg.description if game_cfg else f"Play {game}"
+
+    base_env = make_gaming_env(game=game, max_steps=max_steps)
+    env = GamingAgentNLWrapper(base_env)
+
+    if game == "tetris":
+        if TetrisMacroActionWrapper is None:
+            raise ImportError("TetrisMacroActionWrapper is required for Tetris")
+        env = TetrisMacroActionWrapper(env)
+        if verbose:
+            print("    [macro] Tetris macro-action wrapper (placement-level actions)")
+
+    obs_nl, info = env.reset()
+    action_names = info.get("action_names", [])
+    structured_state = info.get("structured_state")
+
+    experiences: List[Experience] = []
+    total_reward = 0.0
+    step_count = 0
+    terminated = False
+    truncated = False
+
+    last_state_summary = ""
+    current_intention = ""
+
+    while step_count < max_steps:
+        step_actions = action_names if action_names else ["stay"]
+
+        # --- Call get_state_summary ---
+        summary = get_state_summary(
+            obs_nl,
+            structured_state=structured_state,
+            game=GAME_GAMINGAGENT,
+            model=model,
+        )
+        if summary:
+            last_state_summary = summary[:HARD_SUMMARY_CHAR_LIMIT]
+
+        # --- Call infer_intention ---
+        intention = infer_intention(
+            last_state_summary or obs_nl,
+            game=GAME_GAMINGAGENT,
+            model=model,
+            context={
+                "last_actions": [e.action for e in experiences[-5:]],
+                "task": task,
+            },
+        )
+        if intention:
+            current_intention = intention
+
+        # --- Skill guidance (same path as VLMDecisionAgent) ---
+        guidance = get_skill_guidance(skill_bank, last_state_summary or obs_nl, game_name=game)
+
+        # --- Get action from LLM ---
+        action, reasoning = qwen3_agent_action(
+            state_nl=obs_nl,
+            action_names=step_actions,
+            model=model,
+            temperature=temperature,
+            skill_guidance=guidance,
+        )
+
+        combined_intentions = current_intention
+
+        # --- Step environment ---
+        try:
+            next_obs_nl, reward, terminated, truncated, next_info = env.step(action)
+        except Exception as e:
+            print(f"    [ERROR at step {step_count}] env.step failed: {e}")
+            break
+
+        done = terminated or truncated
+        total_reward += reward
+        next_action_names = next_info.get("action_names", action_names)
+        next_structured_state = next_info.get("structured_state")
+
+        # --- Build Experience ---
+        exp = Experience(
+            state=obs_nl,
+            action=str(action),
+            reward=float(reward),
+            next_state=next_obs_nl,
+            done=done,
+            intentions=combined_intentions if combined_intentions else None,
+            tasks=task,
+            sub_tasks=None,
+        )
+        exp.idx = step_count
+        exp.action_type = "macro" if game == "tetris" else "primitive"
+        exp.summary_state = last_state_summary if last_state_summary else None
+        exp.available_actions = list(step_actions) if step_actions else None
+        exp.interface = {"env_name": "gamingagent", "game_name": game, "macro_actions": game == "tetris"}
+
+        # --- Generate experience summary: key=value facts + strategic note ---
+        if ask_model is not None:
+            try:
+                ss = exp.summary_state or ""
+                summary_prompt = (
+                    "Compress this game step into a short strategic note (max 10 words). "
+                    "Focus on the key threat or opportunity.\n"
+                    f"Facts: {ss}\n"
+                    f"Action: {action}\n"
+                    f"State: {obs_nl[:600]}\n"
+                    "Note:"
+                )
+                raw_note = ask_model(
+                    summary_prompt, model=model,
+                    temperature=0.2, max_tokens=40,
+                )
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
+            except Exception:
+                exp.summary = exp.summary_state or None
+
+        experiences.append(exp)
+
+        if verbose:
+            intent_short = (current_intention[:60] + "...") if len(current_intention) > 60 else current_intention
+            reason_short = (reasoning[:60] + "...") if reasoning and len(reasoning) > 60 else reasoning
+            print(
+                f"  step {step_count}: action={action}, reward={reward:.2f}, "
+                f"cum={total_reward:.2f}\n"
+                f"    intention: {intent_short}\n"
+                f"    reasoning: {reason_short}\n"
+                f"    summary:   {last_state_summary[:80]}"
+            )
+
+        obs_nl = next_obs_nl
+        action_names = next_action_names
+        structured_state = next_structured_state
+        step_count += 1
+
+        if done:
+            break
+
+    env.close()
+
+    episode = Episode(
+        experiences=experiences,
+        task=task,
+        env_name="gamingagent",
+        game_name=game,
+        metadata={
+            "done": terminated or truncated,
+            "steps": step_count,
+            "total_reward": total_reward,
+            "model": model,
+            "agent_type": "qwen3_8b",
+            "final_intention": current_intention,
+            "final_state_summary": last_state_summary,
+            "macro_actions": game == "tetris",
+        },
+    )
+    episode.set_outcome()
+
+    stats = {
+        "game": game,
+        "steps": step_count,
+        "total_reward": total_reward,
+        "terminated": terminated,
+        "truncated": truncated,
+        "model": model,
+        "agent_type": "qwen3_8b",
+        "macro_actions": game == "tetris",
+    }
+    return episode, stats
+
+
+# ---------------------------------------------------------------------------
+# JSON serialization helpers
+# ---------------------------------------------------------------------------
+
+def _sanitize_keys(obj: Any) -> Any:
+    """Recursively convert all dict keys to plain ``str`` for JSON serialization."""
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_keys(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_keys(v) for v in obj]
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# Episode runner: Orak games (Super Mario)
+# ---------------------------------------------------------------------------
+
+def run_qwen3_orak_episode(
+    game: str,
+    max_steps: int = 100,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    verbose: bool = False,
+    skill_bank: Any = None,
+    **kwargs,
+) -> Tuple[Episode, Dict[str, Any]]:
+    """Run one Orak game episode with Qwen3-8B."""
+    if make_orak_env is None:
+        raise ImportError("Orak env not available. Install Orak deps and activate the correct conda env.")
+
+    orak_info = ORAK_EVAL_INFO.get(game, {})
+    task = orak_info.get("task", f"Play {game}")
+
+    env = make_orak_env(game, max_steps=max_steps)
+    action_names = env.action_names
+    obs, info = env.reset()
+
+    experiences: List[Experience] = []
+    total_reward = 0.0
+    step_count = 0
+    terminated = False
+    truncated = False
+
+    last_state_summary = ""
+
+    while step_count < max_steps:
+        step_actions = action_names if action_names else ["stay"]
+
+        # State summary (deterministic, no LLM)
+        summary = get_state_summary(obs)
+        if summary:
+            last_state_summary = summary[:HARD_SUMMARY_CHAR_LIMIT]
+
+        # Intention via Qwen3
+        intention = infer_intention(
+            last_state_summary or obs[:1500],
+            game="orak", model=model,
+            context={"last_actions": [e.action for e in experiences[-5:]], "task": task},
+        )
+
+        # Skill guidance (same path as VLMDecisionAgent)
+        guidance = get_skill_guidance(skill_bank, last_state_summary or obs[:500], game_name=game)
+
+        action, reasoning = qwen3_orak_action(
+            state_nl=obs,
+            action_names=step_actions,
+            model=model,
+            temperature=temperature,
+            skill_guidance=guidance,
+        )
+
+        try:
+            next_obs, reward, terminated, truncated, next_info = env.step(action)
+        except Exception as e:
+            print(f"    [ERROR at step {step_count}] env.step failed: {e}")
+            break
+
+        done = terminated or truncated
+        total_reward += reward
+
+        exp = Experience(
+            state=obs,
+            action=str(action),
+            reward=float(reward),
+            next_state=next_obs,
+            done=done,
+            intentions=intention or reasoning,
+            tasks=task,
+        )
+        exp.idx = step_count
+        exp.action_type = "primitive"
+        exp.summary_state = last_state_summary if last_state_summary else None
+        exp.available_actions = list(step_actions)
+        step_info = next_info if isinstance(next_info, dict) else {}
+        exp.interface = {
+            "env_name": "orak",
+            "game_name": game,
+            "step": step_count,
+            "terminated": terminated,
+            "truncated": truncated,
+            "score": step_info.get("score"),
+            "cumulative_reward": total_reward,
+        }
+
+        if ask_model is not None:
+            try:
+                ss = exp.summary_state or ""
+                summary_prompt = (
+                    f"Compress this {game} step into a short strategic note (max 10 words). "
+                    "Focus on the key threat or opportunity.\n"
+                    f"Facts: {ss}\n"
+                    f"Action: {action}\n"
+                    f"State: {obs[:600]}\n"
+                    "Note:"
+                )
+                raw_note = ask_model(
+                    summary_prompt, model=model,
+                    temperature=0.2, max_tokens=40,
+                )
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
+            except Exception:
+                pass
+
+        experiences.append(exp)
+
+        if verbose:
+            act_short = str(action)[:60]
+            reason_short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
+            term_label = "TERM" if terminated else ("TRUNC" if truncated else "")
+            print(f"  step {step_count}: action={act_short}, reward={reward:.3f}, "
+                  f"cum={total_reward:.3f} {term_label}  reason={reason_short}")
+
+        obs = next_obs
+        step_count += 1
+        if done:
+            break
+
+    env.close()
+
+    episode = Episode(
+        experiences=experiences,
+        task=task,
+        env_name="orak",
+        game_name=game,
+        metadata={
+            "done": terminated or truncated,
+            "steps": step_count,
+            "total_reward": total_reward,
+            "model": model,
+            "agent_type": "qwen3_8b",
+        },
+    )
+    episode.set_outcome()
+
+    final_info = next_info if (step_count > 0 and isinstance(next_info, dict)) else {}
+    stats = {
+        "game": game,
+        "steps": step_count,
+        "total_reward": total_reward,
+        "final_score": final_info.get("score", 0),
+        "terminated": terminated,
+        "truncated": truncated,
+        "model": model,
+        "agent_type": "qwen3_8b",
+    }
+    return episode, stats
+
+
+# ---------------------------------------------------------------------------
+# Batch rollout helpers
+# ---------------------------------------------------------------------------
+
+def count_existing_episodes(game_dir: Path) -> int:
+    if not game_dir.exists():
+        return 0
+    return sum(1 for f in game_dir.glob("episode_*.json") if f.name != "episode_buffer.json")
+
+
+def save_episode_jsonl(episode: Episode, jsonl_path: Path, stats: Dict[str, Any]):
+    record = _sanitize_keys(episode.to_dict())
+    record["rollout_metadata"] = stats
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def save_game_summary(
+    game_name: str,
+    game_dir: Path,
+    all_stats: List[Dict[str, Any]],
+    elapsed: float,
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        "game": game_name,
+        "timestamp": datetime.now().isoformat(),
+        "model": args.model,
+        "agent_type": "qwen3_8b",
+        "total_episodes": len(all_stats),
+        "target_episodes": args.episodes,
+        "max_steps": args.max_steps,
+        "labeled": args.label,
+        "elapsed_seconds": elapsed,
+        "episode_stats": all_stats,
+    }
+    valid_stats = [s for s in all_stats if "error" not in s]
+    if valid_stats:
+        rewards = [s["total_reward"] for s in valid_stats]
+        steps = [s["steps"] for s in valid_stats]
+        summary["mean_reward"] = sum(rewards) / len(rewards)
+        summary["mean_steps"] = sum(steps) / len(steps)
+        summary["max_reward"] = max(rewards)
+        summary["min_reward"] = min(rewards)
+
+    summary_path = game_dir / "rollout_summary.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
+    return summary
+
+
+def run_game_rollouts(
+    game_name: str,
+    args: argparse.Namespace,
+    game_run_dir: Path,
+    skill_bank: Any = None,
+) -> Dict[str, Any]:
+    """Run all episodes for one game and save outputs. game_run_dir = output/<model>/<game>/<timestamp>."""
+    game_dir = game_run_dir
+    game_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = game_dir / "rollouts.jsonl"
+
+    start_idx = 0
+    if args.resume:
+        start_idx = count_existing_episodes(game_dir)
+        if start_idx >= args.episodes:
+            print(f"  [SKIP] {game_name}: {start_idx}/{args.episodes} episodes already done")
+            return {"game": game_name, "skipped": True, "existing": start_idx}
+        if start_idx > 0:
+            print(f"  [RESUME] {game_name}: resuming from episode {start_idx}")
+
+    # Determine max_steps from the appropriate config source
+    game_cfg = GAME_CONFIGS.get(game_name)
+    if args.max_steps:
+        effective_max_steps = args.max_steps
+    elif game_cfg:
+        effective_max_steps = game_cfg.max_steps
+    elif game_name in ORAK_EVAL_INFO:
+        effective_max_steps = ORAK_EVAL_INFO[game_name]["max_steps"]
+    else:
+        effective_max_steps = 50
+
+    episode_buffer = Episode_Buffer(buffer_size=args.episodes + 10)
+    all_stats: List[Dict[str, Any]] = []
+    t0 = time.time()
+
+    seed_base = getattr(args, "seed", 42) or 42
+
+    for ep_idx in range(start_idx, args.episodes):
+        print(f"\n  [{game_name}] Episode {ep_idx + 1}/{args.episodes}")
+
+        try:
+            if game_name in ORAK_EVAL_GAME_NAMES:
+                episode, stats = run_qwen3_orak_episode(
+                    game=game_name,
+                    max_steps=effective_max_steps,
+                    model=args.model,
+                    temperature=args.temperature,
+                    verbose=args.verbose,
+                    skill_bank=skill_bank,
+                )
+            else:
+                episode, stats = run_qwen3_episode(
+                    game=game_name,
+                    max_steps=effective_max_steps,
+                    model=args.model,
+                    temperature=args.temperature,
+                    verbose=args.verbose,
+                    label=args.label,
+                    label_model=args.label_model,
+                    skill_bank=skill_bank,
+                )
+
+            stats["episode_index"] = ep_idx
+            print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.2f}")
+
+            episode_buffer.add_episode(episode)
+            all_stats.append(stats)
+
+            ep_data = _sanitize_keys(episode.to_dict())
+            ep_data["metadata"] = stats
+            ep_path = game_dir / f"episode_{ep_idx:03d}.json"
+            with open(ep_path, "w", encoding="utf-8") as f:
+                json.dump(ep_data, f, indent=2, ensure_ascii=False, default=str)
+
+            save_episode_jsonl(episode, jsonl_path, stats)
+
+        except Exception as e:
+            print(f"    [ERROR] Episode {ep_idx + 1} failed: {e}")
+            traceback.print_exc()
+            all_stats.append({
+                "game": game_name,
+                "episode_index": ep_idx,
+                "error": str(e),
+                "steps": 0,
+                "total_reward": 0.0,
+            })
+            continue
+
+    elapsed = time.time() - t0
+
+    # Don't keep empty runs: no successful episodes and no pre-existing episodes from resume
+    if len(episode_buffer) == 0 and start_idx == 0:
+        if game_dir.exists():
+            shutil.rmtree(game_dir)
+        print(f"\n  [INVALID] {game_name}: 0 successful episodes, removed output dir")
+        return {
+            "game": game_name,
+            "total_episodes": 0,
+            "invalid": True,
+            "episode_stats": all_stats,
+        }
+
+    buffer_path = game_dir / "episode_buffer.json"
+    episode_buffer.save_to_json(str(buffer_path))
+    print(f"\n  Saved {len(episode_buffer)} episodes to {buffer_path}")
+
+    summary = save_game_summary(game_name, game_dir, all_stats, elapsed, args)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def _list_all_eval_games() -> List[str]:
+    """Return sorted list of all games the eval script can run."""
+    games = set()
+    try:
+        games.update(list_games())
+    except Exception:
+        games.update(LMGAME_BENCH_NAMES)
+    if make_orak_env is not None:
+        for g in ORAK_EVAL_GAME_NAMES:
+            games.add(g)
+    return sorted(games)
+
+
+def _game_description(game_name: str) -> str:
+    """Return a short description for any supported game."""
+    cfg = GAME_CONFIGS.get(game_name)
+    if cfg:
+        return cfg.description
+    info = ORAK_EVAL_INFO.get(game_name)
+    if info:
+        return info.get("task", info.get("display_name", ""))
+    return ""
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Qwen3-8B decision agent evaluation across LMGame-Bench and Orak (Super Mario) games",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--games", type=str, nargs="+", default=None,
+        help="Games to evaluate (default: all available). Use --list-games to see options.",
+    )
+    parser.add_argument("--episodes", type=int, default=3, help="Episodes per game (default: 3)")
+    parser.add_argument("--max_steps", type=int, default=None, help="Max steps per episode (default: per-game config)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help=f"Model name (default: {DEFAULT_MODEL})")
+    parser.add_argument("--temperature", type=float, default=0.3, help="Sampling temperature (default: 0.3)")
+    parser.add_argument("--label", action="store_true", help="Generate experience summaries via LLM")
+    parser.add_argument("--label_model", type=str, default=None, help="Model for labeling (default: same as --model)")
+    parser.add_argument("--resume", action="store_true", help="Resume interrupted run")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print step-by-step details")
+    parser.add_argument("--output_dir", type=str, default=None, help="Output directory")
+    parser.add_argument("--list-games", action="store_true", help="List available games and exit")
+    parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
+    parser.add_argument(
+        "--bank", type=str, default=None,
+        help="Path to skill bank JSONL file or directory (same format as run_inference.py --bank).",
+    )
+    parser.add_argument(
+        "--no-bank", action="store_true",
+        help="Explicitly run without a skill bank (baseline / ablation).",
+    )
+    parser.add_argument(
+        "--no-query-engine", action="store_true",
+        help="Disable SkillQueryEngine (use plain SkillBankMVP for skill queries).",
+    )
+    args = parser.parse_args()
+
+    if args.list_games:
+        all_games = _list_all_eval_games()
+        print("Available games:")
+        for g in all_games:
+            desc = _game_description(g)
+            cat = ("orak" if g in ORAK_EVAL_GAME_NAMES else "lmgame-bench")
+            suffix = f" - {desc}" if desc else ""
+            print(f"  {g} [{cat}]{suffix}")
+        return
+
+    # Storage: output/<model>/<game>/<timestamp> (timestamp = run start)
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.output_dir:
+        base_dir = Path(args.output_dir)
+    else:
+        model_name = Path(args.model).name or args.model.split("/")[-1] or "model"
+        model_slug = re.sub(r"[^\w\-.]", "_", model_name)
+        base_dir = CODEBASE_ROOT / "output" / model_slug
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    all_known_games = _list_all_eval_games()
+
+    if args.games:
+        requested = args.games
+    else:
+        requested = all_known_games
+
+    available_games: List[str] = []
+    skipped_games: List[str] = []
+    for g in requested:
+        # Orak games
+        if g in ORAK_EVAL_GAME_NAMES:
+            if make_orak_env is None:
+                print(f"[WARNING] Game '{g}' requires Orak env wrappers, skipping.")
+                skipped_games.append(g)
+            elif not _ORAK_GAME_AVAILABLE.get(g, True):
+                hint = {
+                    "super_mario": "gym-super-mario-bros (activate orak-mario conda env)",
+                }.get(g, "game-specific deps")
+                print(f"[WARNING] Game '{g}' requires {hint}, skipping.")
+                skipped_games.append(g)
+            else:
+                available_games.append(g)
+            continue
+        # LMGame-Bench and other games
+        cfg = GAME_CONFIGS.get(g)
+        if cfg is None:
+            if g in all_known_games:
+                available_games.append(g)
+            else:
+                print(f"[WARNING] Game '{g}' not available, skipping.")
+                skipped_games.append(g)
+            continue
+        if not cfg.available:
+            print(f"[WARNING] Game '{g}' marked as unavailable (ROM/purchase required), skipping.")
+            skipped_games.append(g)
+            continue
+        available_games.append(g)
+
+    if not available_games:
+        print("[ERROR] No games available. Ensure GamingAgent / Orak is installed.")
+        sys.exit(1)
+
+    # -- Load skill bank (same function as run_inference.py) --
+    skill_bank_obj = None
+    if not args.no_bank and args.bank:
+        bank, engine = load_skill_bank(
+            args.bank,
+            use_query_engine=not args.no_query_engine,
+        )
+        skill_bank_obj = engine if engine is not None else bank
+    elif args.no_bank:
+        print("[eval] Running without skill bank (--no-bank).")
+
+    print("=" * 78)
+    print("  Decision Agent Evaluation")
+    print("=" * 78)
+    print(f"  Games:       {', '.join(available_games)}")
+    if skipped_games:
+        print(f"  Skipped:     {', '.join(skipped_games)}")
+    print(f"  Episodes:    {args.episodes} per game")
+    print(f"  Max steps:   {'per-game config' if args.max_steps is None else args.max_steps}")
+    print(f"  Model:       {args.model}")
+    print(f"  Temperature: {args.temperature}")
+    bank_desc = "none"
+    if skill_bank_obj is not None:
+        bank_size = len(skill_bank_obj) if hasattr(skill_bank_obj, "__len__") else "?"
+        bank_desc = f"{args.bank} ({bank_size} skills)"
+    print(f"  Skill Bank:  {bank_desc}")
+    print(f"  Labeling:    {args.label}")
+    print(f"  Resume:      {args.resume}")
+    print(f"  Output:      {base_dir} (model/game/{run_timestamp})")
+    print("=" * 78)
+
+    overall_t0 = time.time()
+    game_summaries: List[Dict[str, Any]] = []
+
+    for game_name in available_games:
+        print(f"\n{'━' * 78}")
+        print(f"  GAME: {game_name} ({args.episodes} episodes)")
+        print(f"{'━' * 78}")
+
+        game_run_dir = base_dir / game_name / run_timestamp
+        summary = run_game_rollouts(game_name, args, game_run_dir, skill_bank=skill_bank_obj)
+        game_summaries.append(summary)
+
+    overall_elapsed = time.time() - overall_t0
+
+    orak_games = [g for g in available_games if g in ORAK_EVAL_GAME_NAMES]
+    lmgame_games = [g for g in available_games if g not in ORAK_EVAL_GAME_NAMES]
+    benchmarks = []
+    if lmgame_games:
+        benchmarks.append("LMGame-Bench")
+    if orak_games:
+        benchmarks.append("Orak")
+
+    master_summary = {
+        "benchmark": "+".join(benchmarks) if benchmarks else "multi",
+        "run_started": run_timestamp,
+        "timestamp": datetime.now().isoformat(),
+        "model": args.model,
+        "agent_type": "qwen3_8b",
+        "episodes_per_game": args.episodes,
+        "max_steps": args.max_steps,
+        "temperature": args.temperature,
+        "labeled": args.label,
+        "total_elapsed_seconds": overall_elapsed,
+        "total_games_in_benchmark": len(available_games),
+        "games_run": len([s for s in game_summaries if not s.get("skipped")]),
+        "games_completed": list(available_games),
+        "games_skipped": skipped_games,
+        "results": game_summaries,
+    }
+    batch_summary_dir = base_dir / run_timestamp
+    batch_summary_dir.mkdir(parents=True, exist_ok=True)
+    master_path = batch_summary_dir / "eval_summary.json"
+    with open(master_path, "w", encoding="utf-8") as f:
+        json.dump(master_summary, f, indent=2, ensure_ascii=False, default=str)
+
+    print(f"\n{'=' * 78}")
+    print("  QWEN3-14B EVALUATION COMPLETE")
+    print(f"{'=' * 78}")
+    print(f"  Games processed: {len(available_games)}")
+    total_eps = sum(
+        s.get("total_episodes", 0)
+        for s in game_summaries
+        if not s.get("skipped") and not s.get("invalid")
+    )
+    print(f"  Total episodes:  {total_eps}")
+    print(f"  Elapsed:         {overall_elapsed:.1f}s")
+    print(f"  Output:          {base_dir} (model/game/{run_timestamp})")
+    print(f"  Summary:         {master_path}")
+
+    successful = [
+        s for s in game_summaries
+        if not s.get("skipped") and not s.get("invalid") and "mean_reward" in s
+    ]
+    if successful:
+        avg_reward = sum(s["mean_reward"] for s in successful) / len(successful)
+        avg_steps = sum(s["mean_steps"] for s in successful) / len(successful)
+        print(f"  Avg reward:      {avg_reward:.2f}")
+        print(f"  Avg steps:       {avg_steps:.1f}")
+
+    print(f"{'=' * 78}")
+    print()
+    print("  Load rollouts:")
+    print("    from data_structure.experience import Episode_Buffer")
+    print(f"    buf = Episode_Buffer.load_from_json('{base_dir}/<game>/{run_timestamp}/episode_buffer.json')")
+    print(f"{'=' * 78}\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cosplay-game-ai-agent"
+version = "0.1.0"
+description = "COS-PLAY: Co-Evolving LLM Decision and Skill Bank Agents for Long-Horizon Game Play"
+readme = "readme.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9,<3.12"
+authors = [
+    {name = "COS-PLAY Authors"},
+]
+keywords = ["llm", "reinforcement-learning", "game-ai", "skill-learning", "co-evolution"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy==1.26.4",
+    "pyyaml>=6.0",
+    "torch>=2.1",
+    "transformers>=4.51.0",
+    "peft>=0.10",
+    "safetensors>=0.4",
+    "datasets>=2.0",
+    "accelerate>=0.30",
+    "sentence-transformers>=2.7.0",
+    "Pillow>=9.0",
+    "vllm>=0.4",
+    "httpx>=0.24",
+    "openai>=1.0",
+    "omegaconf>=2.3.0",
+    "hydra-core>=1.3.0",
+    "diplomacy>=1.1.2",
+    "requests>=2.28",
+    "scikit-learn>=1.0",
+    "loguru>=0.7.0",
+    "coloredlogs",
+    "tensorboard>=2.14",
+]
+
+[project.optional-dependencies]
+baselines = [
+    "anthropic>=0.30",
+    "google-genai>=1.0",
+]
+eval = [
+    "lm_eval",
+]
+dev = [
+    "pytest>=7.0",
+]
+# Visual-grounding back-ends used by the VLM wrapper (Florence-2, OmniParser-v2,
+# GroundingDINO, OCR).  Optional because the heuristic head and the GPT-4o
+# vision head both work without them.
+vision = [
+    "timm>=0.9",            # required by Florence-2 image backbone
+    "easyocr>=1.7",         # OCR fallback when paddleocr is not installed
+    "ultralytics>=8.0",     # YOLO icon detector used by OmniParser-v2
+    "opencv-python>=4.7",
+    "decord>=0.6",          # video frame decoding for tools_video.py
+]
+all = [
+    "cosplay-game-ai-agent[baselines,eval,dev,vision]",
+]
+
+[project.urls]
+Homepage = "https://github.com/wuxiyang1996/Game-AI-Agent"
+Paper = "https://arxiv.org/abs/XXXX.XXXXX"
+
+[tool.setuptools.packages.find]
+include = [
+    "decision_agents*",
+    "skill_agents*",
+    "trainer*",
+    "inference*",
+    "env_wrappers*",
+    "rag*",
+    "data_structure*",
+    "cold_start*",
+    "labeling*",
+    "vlm_wrapper*",
+    "gymv_wrapper*",
+    "browsergym_wrapper*",
+    "osworld_wrapper*",
+    "visual_reasoning_wrapper*",
+]
+exclude = [
+    "tests*",
+    "baselines*",
+    "ablation_study*",
+    "install*",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: tests that hit a live GPT-4o API (skipped without OPENAI_API_KEY)",
+]
+# Live tests are off by default so `pytest` stays cheap.  Opt in with
+#     pytest -m "live or not live" vlm_wrapper/tests
+addopts = "-m 'not live'"

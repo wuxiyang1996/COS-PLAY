@@ -1,0 +1,102 @@
+{
+  "game": "twenty_forty_eight",
+  "env_source": "gaming_agent",
+  "bank_path": "/workspace/Multi-hop-Reasoning-VLM-Agent/labeling/skill_bank_out/run_20260430_030637/env_wrappers/twenty_forty_eight/skill_bank.jsonl",
+  "n_skills": 3,
+  "n_success": 3,
+  "n_with_evaluable_effects": 1,
+  "n_all_predicates_passed": 1,
+  "verdicts": [
+    {
+      "skill_id": "COMMIT__MERGE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 3,
+      "n_hops_pass": 3,
+      "pass_rate": 1.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {
+        "n_hops_evaluated": 3,
+        "n_hops_passed": 3,
+        "pass_rate": 1.0,
+        "per_hop": [
+          {
+            "hop_index": 3,
+            "passed": true,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 0,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity_attrs missing on both sides"
+              }
+            ]
+          },
+          {
+            "hop_index": 5,
+            "passed": true,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 0,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity_attrs missing on both sides"
+              }
+            ]
+          },
+          {
+            "hop_index": 6,
+            "passed": true,
+            "n_required": 1,
+            "n_passed": 0,
+            "n_violated": 0,
+            "n_undecidable": 1,
+            "predicates": [
+              {
+                "type": "attribute_changed",
+                "args": {},
+                "passed": null,
+                "detail": "entity_attrs missing on both sides"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "skill_id": "mid:OPTIMIZE",
+      "skill_type": "action",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 0,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {}
+    },
+    {
+      "skill_id": "COMPARE__MERGE",
+      "skill_type": "reasoning",
+      "n_hops_protocol": 7,
+      "n_hops_eval": 0,
+      "n_hops_pass": 0,
+      "pass_rate": 0.0,
+      "success": true,
+      "abort_reason": null,
+      "cumulative_reward": 0.0,
+      "per_hop_effects": {}
+    }
+  ],
+  "timestamp": "20260501_030018"
+}

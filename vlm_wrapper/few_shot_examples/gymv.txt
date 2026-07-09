@@ -1,0 +1,81 @@
+<state>
+domain=gymv
+task=Temporal/Strider-v0
+goal=This is a retro game environment: Strider-Genesis-v0.
+step=20
+
+<entities>
+e1[type=object, label=Strider, bid=null, pos=3,5,1,1, ontology=tracked_entity]
+e2[type=object, label=slash arc, bid=null, pos=3,6,1,1, ontology=interactive_entity]
+e3[type=object, label=left orb chain, bid=null, pos=2,1,1,1, ontology=blocking_entity]
+e4[type=object, label=lower orb, bid=null, pos=6,1,1,1, ontology=blocking_entity]
+e5[type=region, label=left dome, bid=null, pos=3,0,1,1, ontology=navigable_region]
+e6[type=region, label=right dome, bid=null, pos=4,8,1,1, ontology=navigable_region]
+e7[type=region, label=center platform, bid=null, pos=6,5,1,1, ontology=container_entity]
+e8[type=object, label=right spire, bid=null, pos=3,11,1,1, ontology=blocking_entity]
+e9[type=text, label=score hud, bid=null, pos=0,0,1,1, ontology=textual_anchor]
+e10[type=text, label=time hud, bid=null, pos=0,5,1,1, ontology=textual_anchor]
+e11[type=object, label=health bars, bid=null, pos=0,9,1,1, ontology=goal_indicator]
+</entities>
+
+<attributes>
+e1.state=visible
+e2.state=visible
+e3.state=visible
+e4.state=visible
+e11.value=3 bars
+</attributes>
+
+<affordances>
+e1.affords=[track, select, inspect]
+e2.affords=[track, select, inspect]
+e3.affords=[inspect, track]
+e4.affords=[inspect, track]
+e5.affords=[approach, inspect]
+e6.affords=[approach, inspect]
+e7.affords=[approach, inspect]
+e8.affords=[inspect, track]
+</affordances>
+
+<relations>
+adjacent(e1,e2)
+adjacent(e1,e7)
+contains(e5,e3)
+contains(e5,e4)
+contains(e6,e8)
+grouped(e9,e10,e11)
+blocks(e3,e5)
+</relations>
+
+<state_flags>
+progress=0.1
+phase=early
+scene_type=game_play
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e1
+blocker=e3
+constraint=midair attack and movement near hazards
+candidate_set=[e1,e2,e3,e7]
+history_anchor=e1
+
+<uncertainty>
+e1.pos=medium
+e2.pos=medium
+e3.pos=medium
+e4.pos=medium
+e5.pos=high
+e6.pos=high
+e7.pos=medium
+e8.pos=medium
+
+<actions>
+a1=RIGHT
+a2=C
+a3=LEFT
+a4=DOWN
+a5=B
+</state>

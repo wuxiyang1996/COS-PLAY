@@ -1,0 +1,71 @@
+<state>
+domain=gymv
+task=make_gaming_env/twenty_forty_eight
+goal=Play 2048 on a 4x4 grid. Slide tiles up/down/left/right to merge matching numbers; goal is to create the highest tile possible (2048 wins). Larger merged tiles score more.
+step=33
+
+<entities>
+e1[type=region, label=board, bid=null, pos=0,0,4,4, ontology=container_entity]
+e2[type=region, label=empty_cells, bid=null, pos=null, ontology=navigable_region]
+e3[type=object, label=tile_4, bid=null, pos=2,0,1,1, ontology=selectable_entity]
+e4[type=object, label=tile_16, bid=null, pos=2,1,1,1, ontology=selectable_entity]
+e5[type=object, label=tile_2, bid=null, pos=2,2,1,1, ontology=selectable_entity]
+e6[type=object, label=tile_8, bid=null, pos=3,0,1,1, ontology=selectable_entity]
+e7[type=object, label=tile_8, bid=null, pos=3,1,1,1, ontology=selectable_entity]
+e8[type=object, label=tile_32, bid=null, pos=3,2,1,1, ontology=selectable_entity]
+e9[type=object, label=tile_4, bid=null, pos=3,3,1,1, ontology=selectable_entity]
+e10[type=text, label=highest_tile, bid=null, pos=null, ontology=goal_indicator]
+
+<attributes>
+e2.value=9
+e10.value=32
+
+<affordances>
+e3.affords=[select, track, compare, inspect]
+e4.affords=[select, track, compare, inspect]
+e5.affords=[select, track, compare, inspect]
+e6.affords=[select, track, compare, inspect]
+e7.affords=[select, track, compare, inspect]
+e8.affords=[select, track, compare, inspect]
+e9.affords=[select, track, compare, inspect]
+
+<relations>
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e2)
+adjacent(e3,e4)
+adjacent(e4,e5)
+adjacent(e6,e7)
+adjacent(e7,e8)
+adjacent(e8,e9)
+grouped(e6,e7,e2)
+
+<state_flags>
+progress=0.25
+phase=mid
+scene_type=game_play
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e6
+blocker=null
+constraint=merge the adjacent tile_8 pair efficiently
+candidate_set=[e6,e7,e8,e4]
+history_anchor=null
+
+<uncertainty>
+e10.pos=high
+
+<actions>
+a1=left
+a2=up
+a3=right
+a4=down
+</state>

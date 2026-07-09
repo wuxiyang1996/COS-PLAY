@@ -1,0 +1,48 @@
+# Conda env for OSWorld (xlang-ai/OSWorld, source install).
+#
+# Upstream:  https://github.com/xlang-ai/OSWorld
+#
+# Why a separate env?
+#   OSWorld / desktop-env hard-pin `gymnasium~=0.28.1`, `transformers
+#   ~=4.35.2`, and `torch~=2.5.0` — all of which conflict with:
+#     * gym-v (requires gymnasium>=1.2.2)
+#     * the vlm_benchmarks grounding stack (transformers>=4.51 for
+#       GroundingDINO, torch 2.4.1+cu121)
+#   These three are therefore always in separate envs.
+#
+# Build:
+#     git clone https://github.com/xlang-ai/OSWorld.git \
+#         /fs/gamma-projects/vlm-robot/OSWorld
+#     conda env create -f install/osworld.environment.yml
+#     conda activate osworld
+#     cd /fs/gamma-projects/vlm-robot/OSWorld
+#     pip install -r requirements.txt          # finishes the install
+#     pip install -e .                          # editable, for patches
+#
+# To run real desktop tasks you also need a VM backend:
+#     * Docker:    docker pull happysixd/osworld-docker
+#     * VMware:    install VMware Workstation + configure `vmrun`
+#     * AWS:       see OSWorld SETUP_GUIDELINE.md
+#
+# Verify:
+#     python install/osworld_smoke.py
+
+name: osworld
+channels:
+  - conda-forge
+dependencies:
+  # OSWorld's requirements.txt is written against python 3.10+; match
+  # the project default of 3.11 so we line up with our other envs.
+  - python=3.11
+  - pip>=24
+  - pip:
+      # The full OSWorld requirements.txt is pulled automatically when
+      # you run `pip install -r requirements.txt` from the cloned repo
+      # (see install_osworld.sh).  Installing `desktop-env` here gives
+      # us the PyPI-compatible subset so the env is usable even before
+      # you pull the source tree.
+      - desktop-env>=1.0.2
+
+      # ── Testing ─────────────────────────────────────────────────────
+      - pytest>=7.0
+      - pytest-mock>=3.0

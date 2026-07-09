@@ -1,0 +1,69 @@
+<state>
+domain=video_qa
+task=video_holmes.yHioWLdgnMI.Q397
+goal=Identify the option closest to the video's core theme
+step=0
+
+<entities>
+e1[type=region, label=video montage, bid=null, pos=0,0,1365,768, ontology=navigable_region]
+e2[type=object, label=suited man, bid=null, pos=322,0,721,657, ontology=tracked_entity]
+e3[type=object, label=barbershop, bid=null, pos=0,191,1365,444, ontology=container_entity]
+e4[type=object, label=wood bust, bid=null, pos=620,202,267,282, ontology=tracked_entity]
+e5[type=object, label=dental chair, bid=null, pos=912,565,213,178, ontology=selectable_entity]
+e6[type=object, label=wristwatch, bid=null, pos=388,452,203,144, ontology=goal_indicator]
+e7[type=object, label=electric cord, bid=null, pos=565,512,453,214, ontology=goal_indicator]
+e8[type=object, label=dial device, bid=null, pos=437,642,362,126, ontology=goal_indicator]
+e9[type=text, label=end credits, bid=null, pos=139,681,1085,86, ontology=textual_anchor]
+e10[type=object, label=close face, bid=null, pos=827,383,538,190, ontology=tracked_entity]
+
+<attributes>
+e1.state=visible
+e2.state=visible
+e6.value=watch repeatedly emphasized
+e7.value=cord attached to shop equipment
+e8.value=handheld control or timer dial
+e9.value=animation production credits rolling
+
+<affordances>
+e5.affords=[inspect, compare]
+e6.affords=[inspect, compare, track]
+e7.affords=[inspect, track, compare]
+e8.affords=[inspect, track, compare]
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e3,e4)
+contains(e3,e5)
+adjacent(e6,e7)
+adjacent(e7,e8)
+grouped(e2,e6,e8)
+grouped(e3,e4,e5)
+
+<state_flags>
+progress=1.0
+phase=late
+scene_type=video_segment
+error=null
+dialog_open=false
+input_pending=true
+
+<targets>
+target=e6
+blocker=null
+constraint=answer must capture the central theme across all frames, likely involving obsession with time/control in a barbershop setting
+candidate_set=[e6,e7,e8,e2]
+history_anchor=null
+
+<uncertainty>
+e5.ontology=medium
+e8.label=medium
+e8.value=medium
+
+<actions>
+a1=A
+a2=B
+a3=C
+a4=D
+a5=E
+</state>

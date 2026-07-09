@@ -1,0 +1,36 @@
+# =============================================================================
+# orak-mario environment  —  Super Mario Bros via Orak
+# Python 3.11 | numpy<2 required (nes-py incompatibility)
+#
+# Install:
+#   conda create -n orak-mario python=3.11 -y
+#   conda activate orak-mario
+#   pip install -r install/requirements-orak-mario.txt
+# =============================================================================
+
+# ── Core game ───────────────────────────────────────────────────────────────
+gym==0.26.2
+gym-super-mario-bros==7.4.0
+nes-py==8.2.1
+numpy<2                         # nes-py is incompatible with NumPy 2.x
+
+# ── Vision / ML (Orak SuperMarioEnv object detection) ──────────────────────
+torch
+torchvision
+opencv-python-headless
+scikit-image
+Pillow
+
+# ── Orak framework ─────────────────────────────────────────────────────────
+omegaconf==2.3.0
+gymnasium
+dacite
+dataclass-wizard
+dill
+tenacity
+pygame
+PyYAML
+requests
+
+# ── API client (LLM baselines use OpenRouter) ──────────────────────────────
+openai>=1.0

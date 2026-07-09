@@ -1,0 +1,55 @@
+# DeepSpeed ZeRO-3 config for schema_gen LoRA SFT.
+#
+# Used by ``trainer/SFT/schema_gen/run_schema_gen.sh --use-deepspeed``
+# when no ACCELERATE_CONFIG_FILE is exported.  Optimised for the
+# Qwen3.5-35B-A3B base (35B total / 3B active) on H200/A100-class
+# hardware: shards the frozen 70 GB bf16 base across N GPUs while the
+# tiny LoRA adapters train normally.
+#
+# The launcher overrides ``num_processes`` via ``--num-gpus N`` so this
+# file does not pin a process count.
+#
+# Memory budget per GPU at peak (Qwen3.5-35B-A3B + LoRA + grad-ckpt):
+#   2× H200 → ~55-65 GB
+#   3× H200 → ~45-55 GB
+#   4× H200 → ~38-48 GB
+#
+# Stage-3 settings:
+#   * Frozen base weights / grads / optim states are sharded.
+#   * Pinned-CPU offload is OFF (keeps comm overhead minimal on H200s
+#     with NVLink); flip to "cpu" if you spill.
+#   * Activation checkpointing is enabled in ``SchemaGenConfig``
+#     (``gradient_checkpointing=True``).
+
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: DEEPSPEED
+deepspeed_config:
+  zero_stage: 3
+  zero3_init_flag: true
+  zero3_save_16bit_model: true
+  offload_optimizer_device: none
+  offload_param_device: none
+  # Use HF Trainer's value (``--grad_accum``) so we don't need to keep
+  # this file in sync with CLI changes.  DeepSpeed treats ``auto`` as
+  # "ask the integration layer for the value".
+  gradient_accumulation_steps: auto
+  gradient_clipping: 1.0
+  reduce_bucket_size: 5e8
+  stage3_prefetch_bucket_size: 5e8
+  stage3_param_persistence_threshold: 1e6
+
+mixed_precision: bf16
+use_cpu: false
+machine_rank: 0
+num_machines: 1
+# num_processes is overridden by `accelerate launch --num_processes N`
+# so this default is just a placeholder.
+num_processes: 2
+rdzv_backend: static
+same_network: true
+main_training_function: main
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+downcast_bf16: 'no'

@@ -1,0 +1,81 @@
+# Conda env for Gym-V (ModalMinds/gym-v) — STANDALONE / OPTIONAL.
+#
+# Gym-V is a unified platform of 179 procedurally generated visual
+# environments with a Gymnasium-compatible API, across single-turn
+# reasoning, multi-turn games, spatial navigation, and retro arcade.
+#
+# Upstream:  https://github.com/ModalMinds/gym-v
+#
+# WHEN TO USE THIS ENV
+#   Most users do NOT need this env. The unified `game-ai-agent` env
+#   (created by install/install_main_env.sh) already installs gym-v
+#   editable with [games,spatial] extras and — if you pass a ROM zip —
+#   the 13 Temporal/* Sega Genesis envs. See ../README.md §1.
+#
+#   Use this standalone `gymv` env only when you want a slim env for
+#   VLM-eval-only setups, ablation studies, or when you cannot run the
+#   full Qwen3.5/vLLM stack on your machine.
+#
+# Why a separate env at all?
+#   gym-v requires `gymnasium>=1.2.2`; OSWorld/desktop-env hard-pin
+#   `gymnasium~=0.28.1`.  The two APIs are not compatible (0.29+ has
+#   breaking changes), so gym-v and OSWorld cannot coexist in one env.
+#   BrowserGym-core accepts `gymnasium>=0.27`, so it *could* share this
+#   env, but we keep it separate (browsergym.environment.yml) so each
+#   runtime can be versioned independently and source-installed.
+#
+# Build:
+#     git clone https://github.com/ModalMinds/gym-v.git \
+#         /fs/gamma-projects/vlm-robot/gym-v
+#     conda env create -f install/gymv.environment.yml
+#     conda activate gymv
+#     pip install -e "/fs/gamma-projects/vlm-robot/gym-v[games,spatial]"
+#
+#   Optional extras (not installed by default — heavy or niche):
+#     pip install -e "/fs/gamma-projects/vlm-robot/gym-v[temporal]"   # stable-retro
+#     pip install -e "/fs/gamma-projects/vlm-robot/gym-v[vlmeval]"    # VLMEvalKit
+#     pip install -e "/fs/gamma-projects/vlm-robot/gym-v[reasoning-gym]"
+#
+# Verify:
+#     python install/gymv_smoke.py
+
+name: gymv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24
+  - pip:
+      # ── gym-v core deps (from its pyproject.toml) ────────────────────
+      - gymnasium>=1.2.2
+      - click>=8.3.1
+      - loguru>=0.7.3
+      - matplotlib>=3.10.8
+      - networkx>=3.4.2
+      - orjson>=3.11.5
+      - pillow>=12.0.0
+      - prompt-toolkit>=3.0.52
+      - pydantic>=2.12.5
+      - scipy>=1.15.3
+      - numpy>=1.26,<2.0         # gymnasium 1.2 + scipy 1.15 agree here
+
+      # ── optional extras pre-installed for the two most-used groups ──
+      # games:
+      - "textarena>=0.7.4"
+      - "pettingzoo[classic]>=1.25.0"
+      # spatial:
+      - "minigrid>=2.5.0"
+      # (miniworld is a VCS dep; install via pip install -e .[spatial]
+      #  from the gym-v checkout so the git+ URL is honored)
+
+      # ── API clients for agent-side smoke testing ────────────────────
+      - openai>=1.0
+      - anthropic>=0.40
+      - google-genai>=0.3
+
+      # ── Utilities ───────────────────────────────────────────────────
+      - tqdm
+      - python-dotenv
+
+      # ── Testing ─────────────────────────────────────────────────────
+      - pytest>=7.0

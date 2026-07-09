@@ -1,0 +1,238 @@
+<state>
+domain=gymv
+task=make_gaming_env/candy_crush
+goal=Match-3 puzzle on an 8x8 colored grid. Swap two adjacent candies to form lines of 3+ same colors, which clear them and earn points. Limited number of moves per episode.
+step=7
+
+<entities>
+e1[type=region, label=board, bid=null, pos=0,0,8,8, ontology=container_entity]
+e2[type=object, label=candy_R, bid=null, pos=0,0,1,1, ontology=selectable_entity]
+e3[type=object, label=candy_R, bid=null, pos=0,1,1,1, ontology=selectable_entity]
+e4[type=object, label=candy_C, bid=null, pos=0,2,1,1, ontology=selectable_entity]
+e5[type=object, label=candy_R, bid=null, pos=0,3,1,1, ontology=selectable_entity]
+e6[type=object, label=candy_P, bid=null, pos=0,4,1,1, ontology=selectable_entity]
+e7[type=object, label=candy_G, bid=null, pos=0,5,1,1, ontology=selectable_entity]
+e8[type=object, label=candy_R, bid=null, pos=0,6,1,1, ontology=selectable_entity]
+e9[type=object, label=candy_R, bid=null, pos=0,7,1,1, ontology=selectable_entity]
+e10[type=object, label=candy_G, bid=null, pos=1,0,1,1, ontology=selectable_entity]
+e11[type=object, label=candy_R, bid=null, pos=1,1,1,1, ontology=selectable_entity]
+e12[type=object, label=candy_R, bid=null, pos=1,2,1,1, ontology=selectable_entity]
+e13[type=object, label=candy_C, bid=null, pos=1,3,1,1, ontology=selectable_entity]
+e14[type=object, label=candy_R, bid=null, pos=1,4,1,1, ontology=selectable_entity]
+e15[type=object, label=candy_C, bid=null, pos=1,5,1,1, ontology=selectable_entity]
+e16[type=object, label=candy_G, bid=null, pos=1,6,1,1, ontology=selectable_entity]
+e17[type=object, label=candy_R, bid=null, pos=1,7,1,1, ontology=selectable_entity]
+e18[type=object, label=candy_G, bid=null, pos=2,0,1,1, ontology=selectable_entity]
+e19[type=object, label=candy_P, bid=null, pos=2,1,1,1, ontology=selectable_entity]
+e20[type=object, label=candy_C, bid=null, pos=2,2,1,1, ontology=selectable_entity]
+e21[type=object, label=candy_G, bid=null, pos=2,3,1,1, ontology=selectable_entity]
+e22[type=object, label=candy_P, bid=null, pos=2,4,1,1, ontology=selectable_entity]
+e23[type=object, label=candy_P, bid=null, pos=2,5,1,1, ontology=selectable_entity]
+e24[type=object, label=candy_R, bid=null, pos=2,6,1,1, ontology=selectable_entity]
+e25[type=object, label=candy_P, bid=null, pos=2,7,1,1, ontology=selectable_entity]
+e26[type=object, label=candy_P, bid=null, pos=3,0,1,1, ontology=selectable_entity]
+e27[type=object, label=candy_C, bid=null, pos=3,1,1,1, ontology=selectable_entity]
+e28[type=object, label=candy_R, bid=null, pos=3,2,1,1, ontology=selectable_entity]
+e29[type=object, label=candy_G, bid=null, pos=3,3,1,1, ontology=selectable_entity]
+e30[type=object, label=candy_C, bid=null, pos=3,4,1,1, ontology=selectable_entity]
+e31[type=object, label=candy_R, bid=null, pos=3,5,1,1, ontology=selectable_entity]
+e32[type=object, label=candy_C, bid=null, pos=3,6,1,1, ontology=selectable_entity]
+e33[type=object, label=candy_G, bid=null, pos=3,7,1,1, ontology=selectable_entity]
+e34[type=object, label=candy_P, bid=null, pos=4,0,1,1, ontology=selectable_entity]
+e35[type=object, label=candy_G, bid=null, pos=4,1,1,1, ontology=selectable_entity]
+e36[type=object, label=candy_P, bid=null, pos=4,2,1,1, ontology=selectable_entity]
+e37[type=object, label=candy_C, bid=null, pos=4,3,1,1, ontology=selectable_entity]
+e38[type=object, label=candy_P, bid=null, pos=4,4,1,1, ontology=selectable_entity]
+e39[type=object, label=candy_P, bid=null, pos=4,5,1,1, ontology=selectable_entity]
+e40[type=object, label=candy_R, bid=null, pos=4,6,1,1, ontology=selectable_entity]
+e41[type=object, label=candy_G, bid=null, pos=4,7,1,1, ontology=selectable_entity]
+e42[type=object, label=candy_C, bid=null, pos=5,0,1,1, ontology=selectable_entity]
+e43[type=object, label=candy_G, bid=null, pos=5,1,1,1, ontology=selectable_entity]
+e44[type=object, label=candy_G, bid=null, pos=5,2,1,1, ontology=selectable_entity]
+e45[type=object, label=candy_P, bid=null, pos=5,3,1,1, ontology=selectable_entity]
+e46[type=object, label=candy_G, bid=null, pos=5,4,1,1, ontology=selectable_entity]
+e47[type=object, label=candy_R, bid=null, pos=5,5,1,1, ontology=selectable_entity]
+e48[type=object, label=candy_P, bid=null, pos=5,6,1,1, ontology=selectable_entity]
+e49[type=object, label=candy_C, bid=null, pos=5,7,1,1, ontology=selectable_entity]
+e50[type=object, label=candy_G, bid=null, pos=6,0,1,1, ontology=selectable_entity]
+e51[type=object, label=candy_P, bid=null, pos=6,1,1,1, ontology=selectable_entity]
+e52[type=object, label=candy_G, bid=null, pos=6,2,1,1, ontology=selectable_entity]
+e53[type=object, label=candy_R, bid=null, pos=6,3,1,1, ontology=selectable_entity]
+e54[type=object, label=candy_P, bid=null, pos=6,4,1,1, ontology=selectable_entity]
+e55[type=object, label=candy_R, bid=null, pos=6,5,1,1, ontology=selectable_entity]
+e56[type=object, label=candy_R, bid=null, pos=6,6,1,1, ontology=selectable_entity]
+e57[type=object, label=candy_P, bid=null, pos=6,7,1,1, ontology=selectable_entity]
+e58[type=object, label=candy_C, bid=null, pos=7,0,1,1, ontology=selectable_entity]
+e59[type=object, label=candy_R, bid=null, pos=7,1,1,1, ontology=selectable_entity]
+e60[type=object, label=candy_C, bid=null, pos=7,2,1,1, ontology=selectable_entity]
+e61[type=object, label=candy_G, bid=null, pos=7,3,1,1, ontology=selectable_entity]
+e62[type=object, label=candy_R, bid=null, pos=7,4,1,1, ontology=selectable_entity]
+e63[type=object, label=candy_G, bid=null, pos=7,5,1,1, ontology=selectable_entity]
+e64[type=object, label=candy_C, bid=null, pos=7,6,1,1, ontology=selectable_entity]
+e65[type=object, label=candy_P, bid=null, pos=7,7,1,1, ontology=selectable_entity]
+e66[type=text, label=moves_left, bid=null, pos=null, ontology=textual_anchor]
+e67[type=text, label=score, bid=null, pos=null, ontology=textual_anchor]
+
+<attributes>
+e66.value=43
+e67.value=60
+
+<affordances>
+e2.affords=[select,track,inspect]
+e3.affords=[select,track,inspect]
+e4.affords=[select,track,inspect]
+e5.affords=[select,track,inspect]
+e6.affords=[select,track,inspect]
+e7.affords=[select,track,inspect]
+e8.affords=[select,track,inspect]
+e9.affords=[select,track,inspect]
+e10.affords=[select,track,inspect]
+e11.affords=[select,track,inspect]
+e12.affords=[select,track,inspect]
+e13.affords=[select,track,inspect]
+e14.affords=[select,track,inspect]
+e15.affords=[select,track,inspect]
+e16.affords=[select,track,inspect]
+e17.affords=[select,track,inspect]
+e18.affords=[select,track,inspect]
+e19.affords=[select,track,inspect]
+e20.affords=[select,track,inspect]
+e21.affords=[select,track,inspect]
+e22.affords=[select,track,inspect]
+e23.affords=[select,track,inspect]
+e24.affords=[select,track,inspect]
+e25.affords=[select,track,inspect]
+e26.affords=[select,track,inspect]
+e27.affords=[select,track,inspect]
+e28.affords=[select,track,inspect]
+e29.affords=[select,track,inspect]
+e30.affords=[select,track,inspect]
+e31.affords=[select,track,inspect]
+e32.affords=[select,track,inspect]
+e33.affords=[select,track,inspect]
+e34.affords=[select,track,inspect]
+e35.affords=[select,track,inspect]
+e36.affords=[select,track,inspect]
+e37.affords=[select,track,inspect]
+e38.affords=[select,track,inspect]
+e39.affords=[select,track,inspect]
+e40.affords=[select,track,inspect]
+e41.affords=[select,track,inspect]
+e42.affords=[select,track,inspect]
+e43.affords=[select,track,inspect]
+e44.affords=[select,track,inspect]
+e45.affords=[select,track,inspect]
+e46.affords=[select,track,inspect]
+e47.affords=[select,track,inspect]
+e48.affords=[select,track,inspect]
+e49.affords=[select,track,inspect]
+e50.affords=[select,track,inspect]
+e51.affords=[select,track,inspect]
+e52.affords=[select,track,inspect]
+e53.affords=[select,track,inspect]
+e54.affords=[select,track,inspect]
+e55.affords=[select,track,inspect]
+e56.affords=[select,track,inspect]
+e57.affords=[select,track,inspect]
+e58.affords=[select,track,inspect]
+e59.affords=[select,track,inspect]
+e60.affords=[select,track,inspect]
+e61.affords=[select,track,inspect]
+e62.affords=[select,track,inspect]
+e63.affords=[select,track,inspect]
+e64.affords=[select,track,inspect]
+e65.affords=[select,track,inspect]
+
+<relations>
+contains(e1,e2)
+contains(e1,e3)
+contains(e1,e4)
+contains(e1,e5)
+contains(e1,e6)
+contains(e1,e7)
+contains(e1,e8)
+contains(e1,e9)
+contains(e1,e10)
+contains(e1,e11)
+contains(e1,e12)
+contains(e1,e13)
+contains(e1,e14)
+contains(e1,e15)
+contains(e1,e16)
+contains(e1,e17)
+contains(e1,e18)
+contains(e1,e19)
+contains(e1,e20)
+contains(e1,e21)
+contains(e1,e22)
+contains(e1,e23)
+contains(e1,e24)
+contains(e1,e25)
+contains(e1,e26)
+contains(e1,e27)
+contains(e1,e28)
+contains(e1,e29)
+contains(e1,e30)
+contains(e1,e31)
+contains(e1,e32)
+contains(e1,e33)
+contains(e1,e34)
+contains(e1,e35)
+contains(e1,e36)
+contains(e1,e37)
+contains(e1,e38)
+contains(e1,e39)
+contains(e1,e40)
+contains(e1,e41)
+contains(e1,e42)
+contains(e1,e43)
+contains(e1,e44)
+contains(e1,e45)
+contains(e1,e46)
+contains(e1,e47)
+contains(e1,e48)
+contains(e1,e49)
+contains(e1,e50)
+contains(e1,e51)
+contains(e1,e52)
+contains(e1,e53)
+contains(e1,e54)
+contains(e1,e55)
+contains(e1,e56)
+contains(e1,e57)
+contains(e1,e58)
+contains(e1,e59)
+contains(e1,e60)
+contains(e1,e61)
+contains(e1,e62)
+contains(e1,e63)
+contains(e1,e64)
+contains(e1,e65)
+adjacent(e43,e44)
+adjacent(e45,e46)
+adjacent(e54,e62)
+
+<state_flags>
+progress=0.35
+phase=mid
+scene_type=game_play
+error=null
+dialog_open=false
+input_pending=false
+
+<targets>
+target=e54
+blocker=null
+constraint=swap only adjacent candies using listed valid actions
+candidate_set=[e54,e62,e43,e44,e45,e46]
+history_anchor=e43
+
+<uncertainty>
+
+<actions>
+a1=((6,4),(7,4))
+a2=((5,1),(6,1))
+a3=((5,3),(5,4))
+a4=((4,3),(5,3))
+a5=((4,5),(4,6))
+</state>

@@ -1,0 +1,64 @@
+# Conda env for BrowserGym (ServiceNow/BrowserGym, source install).
+#
+# Upstream:  https://github.com/ServiceNow/BrowserGym
+#
+# Covers MiniWoB++, WebArena, VisualWebArena, AssistantBench, and the
+# core framework.  WorkArena is NOT included because it ships in a
+# separate PyPI package (browsergym-workarena) that pins tqdm>=4.66.2
+# incompatibly with many other stacks; install it on top with:
+#     pip install --no-deps browsergym-workarena
+#
+# Why a separate env?  BrowserGym-core hard-pins `playwright==1.44` and
+# pulls in task-suite specific libs (libwebarena, libvisualwebarena)
+# that are best isolated from the grounding / gym-v / osworld stacks.
+#
+# Build:
+#     git clone https://github.com/ServiceNow/BrowserGym.git \
+#         /fs/gamma-projects/vlm-robot/BrowserGym
+#     conda env create -f install/browsergym.environment.yml
+#     conda activate browsergym
+#     cd /fs/gamma-projects/vlm-robot/BrowserGym && make install   # or pip install -e ./browsergym/{core,miniwob,webarena,visualwebarena,assistantbench,experiments}
+#     python -m playwright install chromium
+#
+# Verify:
+#     python install/browsergym_smoke.py
+
+name: browsergym
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24
+  - pip:
+      # ── BrowserGym-core hard pins ────────────────────────────────────
+      - playwright==1.44
+      - gymnasium>=0.27               # core accepts both 0.28 and 1.x
+      - numpy>=1.14,<2.0
+      - pyparsing>=3
+      - Pillow>=10.1
+      - beautifulsoup4>=4.12
+      - "lxml>=4.9,<6.0.0"
+      - "mcp[cli]>=1.6.0"
+
+      # ── Task-suite libraries (pulled from the BrowserGym requirements
+      #   files for miniwob/webarena/visualwebarena/assistantbench) ────
+      - libwebarena==0.0.5
+      - libvisualwebarena==0.0.15
+      - requests
+      # torch is needed by visualwebarena for its scoring model
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.4.1
+
+      # ── API clients for agent-side smoke tests ──────────────────────
+      - openai>=1.0
+      - anthropic>=0.40
+      - google-genai>=0.3
+
+      # ── Utilities ───────────────────────────────────────────────────
+      - tqdm
+      - loguru
+      - python-dotenv
+
+      # ── Testing ─────────────────────────────────────────────────────
+      - pytest>=7.0
+      - pytest-mock>=3.0
