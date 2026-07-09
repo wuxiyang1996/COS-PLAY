@@ -1,0 +1,139 @@
+# Co-Evolution Framework: Decision Agent GRPO Training — 80GB GPUs
+# Model: Qwen/Qwen3-8B (text-only LLM)
+#
+# The Decision Agent plays game environments, selecting primitive actions
+# and tool calls (QUERY_SKILL, CALL_SKILL, QUERY_MEM).
+# Trained with GRPO via VERL on episode-level rewards.
+
+data:
+  train_files: ""                 # populated at runtime with rollout parquets
+  val_files: ""
+  prompt_key: prompt
+  answer_key: answer
+  max_prompt_length: 8192
+  max_response_length: 4096
+  rollout_batch_size: 64
+  mini_rollout_batch_size: null
+  val_batch_size: 32
+  format_prompt: null
+  override_chat_template: null
+  shuffle: true
+  seed: 1
+  filter_overlong_prompts: true
+
+algorithm:
+  adv_estimator: grpo
+  gamma: 0.99
+  lam: 0.95
+  disable_kl: false
+  use_kl_loss: true
+  use_kl_in_reward: false
+  kl_penalty: low_var_kl
+  kl_coef: 1.0e-2
+  norm_adv_by_std_in_grpo: true
+  online_filtering: false
+  filter_key: overall
+  filter_low: 0.01
+  filter_high: 0.99
+
+worker:
+  actor:
+    global_batch_size: 64
+    micro_batch_size_per_device_for_update: 1
+    micro_batch_size_per_device_for_experience: 1
+    max_grad_norm: 1.0
+    clip_ratio: 0.2
+    entropy_coeff: 0.01
+    padding_free: true
+    dynamic_batching: true
+    ulysses_size: 1
+    loss_agg_mode: token_mean
+    strategy: fsdp
+    model:
+      model_path: Qwen/Qwen3-8B
+      enable_gradient_checkpointing: true
+      trust_remote_code: false
+      lora:
+        rank: 16
+        alpha: 32
+    optim:
+      lr: 1.0e-5
+      weight_decay: 1.0e-2
+      strategy: adamw
+      lr_warmup_ratio: 0.03
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: false
+      enable_rank0_init: true
+    offload:
+      offload_params: true
+      offload_optimizer: true
+
+  critic:
+    global_batch_size: 64
+
+  rollout:
+    n: 8                          # GRPO group size
+    temperature: 0.7
+    top_p: 0.95
+    gpu_memory_utilization: 0.85
+    max_model_len: null
+    max_num_batched_tokens: 16384
+    enforce_eager: false
+    enable_chunked_prefill: true
+    tensor_parallel_size: 2       # Qwen3-8B needs TP=2 on 80GB GPUs
+    disable_tqdm: false
+    val_override_config:
+      temperature: 0.0
+      top_p: 1.0
+      n: 1
+
+  ref:
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: true
+      enable_rank0_init: true
+    offload:
+      offload_params: false
+
+  reward:
+    reward_function: null         # set at runtime by launch_train.py
+
+trainer:
+  total_epochs: 10
+  max_steps: 20
+  project_name: game_ai_coevolution
+  experiment_name: decision_agent
+  logger: ["file", "wandb"]
+  nnodes: 1
+  n_gpus_per_node: 4              # Decision Agent trains on GPUs 0-3
+  max_try_make_batch: 20
+  val_freq: 5
+  val_before_train: false
+  val_only: false
+  val_generations_to_log: 3
+  save_freq: 20
+  save_limit: -1
+  save_model_only: false
+  save_checkpoint_path: null
+  load_checkpoint_path: null
+  find_last_checkpoint: true
+
+coevolution:
+  enable: true
+  bank_update_cadence: 10         # EM update every N training steps
+  em_max_iterations: 3
+  min_pass_rate: 0.6
+  max_new_rate: 0.3
+  bank_dir: runs/skillbank
+  segmentation_store_path: runs/skillbank/segmentations.jsonl
+  max_trajectories_per_update: 256
+  enable_tool_call_reward: true
+  tool_call_reward_weight: 0.1
+
+env:
+  env_name: gameai
+  max_steps: 500
+  seed: 42
+  rollout:
+    n: 8

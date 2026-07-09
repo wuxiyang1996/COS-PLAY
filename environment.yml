@@ -1,0 +1,35 @@
+# Conda environment for Game-AI-Agent.
+#
+# Create:  conda env create -f environment.yml
+# Activate: conda activate game-ai-agent
+#
+# For VERL training/inference: clone verl-agent as a sibling of Game-AI-Agent
+# and install it (pip install -e .). See INSTALL.md section 3.
+
+name: game-ai-agent
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python>=3.9,<3.12
+  - pip
+
+  # Core
+  - numpy
+  - pyyaml
+
+  # Pip deps (RAG, config, etc.)
+  - pip:
+    - sentence-transformers>=2.7.0
+    - transformers>=4.51.0
+    # Standalone trainer / inference (no VERL)
+    - omegaconf
+    - hydra-core
+
+# VERL path: after creating this env, clone verl-agent next to Game-AI-Agent
+# and run: pip install -e ./verl-agent
+# Then: python -m scripts.run_trainer --verl  (training)
+#       python -m scripts.run_inference --verl (inference)

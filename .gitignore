@@ -1,0 +1,54 @@
+# Secrets
+api_keys.py
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Training outputs
+runs/
+wandb/
+output/
+**/output/
+eval_results/
+orak_logs/
+orak_gpt54_output/
+test_rollout/
+logs/
+
+# Cold-start & labeling caches
+cold_start/output/
+cold_start/cache/
+cold_start/backup/
+labeling/output/
+labeling/backup/
+
+# Skill bank extraction artifacts
+skill_agents_grpo/extract_skillbank/output/
+skill_agents_grpo/extract_skillbank/backup/
+skill_agents_grpo/extract_skillbank/backup_*/
+
+# Baselines & ablations
+baselines/output/
+ablation_study/output/
+
+# Large / generated docs
+*.pdf
+*.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data (download separately)
+data/
+SFT_Data/

@@ -1,0 +1,32 @@
+# orak-sc2 environment
+# Conda: python=3.11
+#
+# Also requires the SC2 headless Linux client (see install.sh).
+#
+# Install:
+#   conda create -n orak-sc2 python=3.11 -y
+#   conda activate orak-sc2
+#   pip install -r evaluate_orak/envs/orak-sc2/requirements.txt
+
+# --- core game ---
+burnysc2>=6.5
+nest-asyncio
+s2clientprotocol
+
+# --- Orak framework ---
+omegaconf==2.3.0
+gymnasium
+dacite
+dataclass-wizard
+dill
+tenacity
+pygame
+PyYAML
+numpy
+Pillow
+requests
+scipy
+
+# --- Orak StarCraft env extras ---
+mss                            # window capture (headless safe)
+screeninfo                     # monitor detection (headless safe)

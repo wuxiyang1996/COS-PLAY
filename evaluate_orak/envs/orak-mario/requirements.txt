@@ -1,0 +1,31 @@
+# orak-mario environment
+# Conda: python=3.11  (nes-py requires Python 3.10-3.12)
+#
+# Install:
+#   conda create -n orak-mario python=3.11 -y
+#   conda activate orak-mario
+#   pip install -r evaluate_orak/envs/orak-mario/requirements.txt
+
+# --- core game ---
+gym==0.26.2
+gym-super-mario-bros==7.4.0
+nes-py==8.2.1
+numpy<2                        # nes-py is incompatible with NumPy 2.x
+
+# --- vision / ML (used by Orak SuperMarioEnv for object detection) ---
+torch
+torchvision
+opencv-python-headless
+scikit-image
+Pillow
+
+# --- Orak framework ---
+omegaconf==2.3.0
+gymnasium
+dacite
+dataclass-wizard
+dill
+tenacity
+pygame
+PyYAML
+requests

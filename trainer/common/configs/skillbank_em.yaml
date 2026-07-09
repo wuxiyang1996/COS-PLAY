@@ -1,0 +1,84 @@
+# SkillBank Hard-EM Training Configuration
+# Agent B: SkillBank Agent updated via Hard-EM (decode → update → gate)
+
+# ── Predicate extraction ─────────────────────────────────────────────
+predicates:
+  p_thresh_vision: 0.7        # booleanization threshold for vision predicates
+  smoothing_window: 3         # temporal smoothing window for predicate probs
+  min_predicate_freq: 0.05    # drop predicates appearing < 5% of frames
+
+# ── Stage 1: Propose cuts ────────────────────────────────────────────
+propose_cuts:
+  w: 5                        # minimum segment width
+  merge_radius: 5             # merge cuts within this radius
+  surprisal_weight: 0.5       # weight for surprisal-based boundary detection
+  predicate_change_weight: 0.5  # weight for predicate-change boundary detection
+
+# ── Stage 2: Decode ──────────────────────────────────────────────────
+decode:
+  top_m_candidates: 10        # max skill candidates per segment
+  segment_min_len: 3          # minimum segment length
+  segment_max_len: 100        # maximum segment length
+  new_skill_penalty: 5.0      # α: penalty for assigning NEW label
+  eff_freq: 0.8               # frequency threshold for effect inclusion in contract
+  tau_create: 0.7             # creation threshold for new skill clusters
+
+# ── Stage 3: Contracts ───────────────────────────────────────────────
+contracts:
+  min_instances_per_skill: 5  # minimum segments to learn a contract
+  start_end_window: 5         # predicate observation window at boundaries
+  pass_rate_threshold: 0.6    # minimum pass rate to keep a contract
+  verification_sample_size: 50  # max segments for verification per skill
+
+# ── Stage 4: Update ──────────────────────────────────────────────────
+update:
+  min_new_cluster_size: 5     # minimum segments in NEW cluster to materialize
+  split_pass_rate_threshold: 0.7
+  child_pass_rate_threshold: 0.8
+  merge_jaccard_threshold: 0.85
+  merge_embedding_threshold: 0.90
+  min_child_size: 3
+  refine_delta_threshold: 0.05  # minimum effect delta to trigger refine
+
+# ── SkillEval gating ─────────────────────────────────────────────────
+gating:
+  min_pass_rate: 0.6          # reject bank if avg pass rate drops below
+  min_support: 3              # minimum instance support per skill
+  max_new_rate: 0.3           # reject if NEW rate exceeds this
+  margin_regression_tol: 0.1  # tolerate this much margin regression
+  confusion_threshold: 0.3    # flag confuser pairs above this overlap
+
+# ── EM loop ──────────────────────────────────────────────────────────
+em:
+  max_iterations: 3           # EM iterations per batch
+  convergence_new_rate: 0.05  # converged when NEW rate below this
+  convergence_margin_std: 0.5 # converged when margin std below this
+  holdout_fraction: 0.1       # fraction of trajectories for quick eval
+  local_redecode: true        # re-decode only impacted trajectories
+
+# ── Bank I/O ─────────────────────────────────────────────────────────
+bank_io:
+  bank_dir: "runs/skillbank"
+  snapshot_prefix: "bank_v"
+  max_snapshots: 20           # keep last N bank snapshots
+  diff_log_path: "runs/skillbank/diffs"
+
+# ── Logging ──────────────────────────────────────────────────────────
+logging:
+  log_dir: "runs/skillbank_em"
+  use_wandb: false
+  wandb_project: "game-ai-skillbank"
+
+# ── Multi-LoRA (Skill Bank in LoRA mode) ──────────────────────────────
+# Skill bank uses a shared Qwen3-8B backbone with function-specific
+# LoRA adapters. Paths are overridden at runtime by skillbank_agent_train.sh.
+lora:
+  base_model_name_or_path: "Qwen/Qwen3-8B"
+  adapter_paths:
+    boundary:  "runs/lora_adapters/boundary"
+    segment:   "runs/lora_adapters/segment"
+    contract:  "runs/lora_adapters/contract"
+    retrieval: "runs/lora_adapters/retrieval"
+  device: "auto"
+  dtype: "bfloat16"
+  allow_fallback_to_base_model: true

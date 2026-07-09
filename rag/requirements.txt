@@ -1,0 +1,16 @@
+# RAG embedding models
+# Text (RAG) default: Qwen/Qwen3-Embedding-0.6B
+# Multimodal default: Qwen/Qwen3-VL-Embedding-2B
+
+# Text embedding (required for get_text_embedder)
+sentence-transformers>=2.7.0
+transformers>=4.51.0
+
+# Multimodal embedding (required for get_multimodal_embedder)
+# Uncomment and use when using MultimodalEmbedder:
+# transformers>=4.57.0
+# qwen-vl-utils>=0.0.14
+# torch>=2.0.0
+
+# Common
+numpy>=1.20.0

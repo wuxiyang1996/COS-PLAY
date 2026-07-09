@@ -1,0 +1,60 @@
+# Multi-LoRA Skill Bank Agent Configuration
+#
+# One shared Qwen3-8B backbone + 4 function-specific LoRA adapters.
+# Each adapter specializes the base model for one skill-bank function.
+#
+# To initialize:
+#   from skill_agents.lora import MultiLoraSkillBankLLM, MultiLoraConfig
+#   import yaml
+#   with open("configs/skillbank_lora.yaml") as f:
+#       raw = yaml.safe_load(f)
+#   cfg = MultiLoraConfig.from_dict(raw["lora"])
+#   llm = MultiLoraSkillBankLLM(cfg)
+#   llm.load()
+#   MultiLoraSkillBankLLM.set_shared_instance(llm)
+
+lora:
+  # ── Shared backbone ────────────────────────────────────────────────
+  base_model_name_or_path: "Qwen/Qwen3-8B"
+  device: "auto"            # "auto" | "cuda:0" | "cpu"
+  dtype: "bfloat16"         # "bfloat16" | "float16" | "float32"
+
+  # ── Adapter paths (one per function) ───────────────────────────────
+  adapter_paths:
+    boundary:  "runs/lora_adapters/boundary"
+    segment:   "runs/lora_adapters/segment"
+    contract:  "runs/lora_adapters/contract"
+    retrieval: "runs/lora_adapters/retrieval"
+
+  # ── Generation defaults ────────────────────────────────────────────
+  default_function: "boundary"
+  max_new_tokens: 1024
+  temperature: 0.3
+  top_p: 0.9
+
+  # ── Fallback behavior ─────────────────────────────────────────────
+  # If an adapter is missing, run with the base model (no error).
+  allow_fallback_to_base_model: true
+
+
+# ── Training defaults per adapter ──────────────────────────────────
+lora_training:
+  base_model_name_or_path: "Qwen/Qwen3-8B"
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  learning_rate: 2.0e-4
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  max_seq_length: 2048
+  warmup_ratio: 0.05
+  bf16: true
