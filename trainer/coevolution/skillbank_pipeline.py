@@ -49,12 +49,18 @@ class AsyncSkillBankPipeline:
         executor: Optional[ThreadPoolExecutor] = None,
         report_dir: Optional[str] = None,
         game_name: str = "generic",
+        ablation_no_contract: bool = False,
+        ablation_raw_delta_contract: bool = False,
+        ablation_heuristic_segmentation: bool = False,
     ):
         self.bank_dir = bank_dir
         self.model_name = model_name
         self.game_name = game_name
         self._executor = executor
         self.report_dir = report_dir or str(Path(bank_dir) / "reports")
+        self._ablation_no_contract = ablation_no_contract
+        self._ablation_raw_delta_contract = ablation_raw_delta_contract
+        self._ablation_heuristic_segmentation = ablation_heuristic_segmentation
         self._agent: Any = None
         self._query_engine: Any = None
         self._pending_episodes: List[Any] = []
@@ -84,15 +90,20 @@ class AsyncSkillBankPipeline:
             preference_iterations=1,
             new_skill_penalty=2.0,
             eff_freq=0.5,
-            min_instances_per_skill=1,
+            # ≥3 instances per skill: single-segment "skills" (e.g. one
+            # segment where a bowl appeared) are noise, not skills.
+            min_instances_per_skill=3,
             start_end_window=3,
-            new_pool_min_cluster_size=1,
+            new_pool_min_cluster_size=2,
             new_pool_min_consistency=0.3,
             new_pool_min_distinctiveness=0.15,
-            min_new_cluster_size=1,
+            min_new_cluster_size=2,
             report_dir=self.report_dir,
             max_concurrent_llm_calls=24,
             llm_teacher_max_workers=4,
+            ablation_no_contract=self._ablation_no_contract,
+            ablation_raw_delta_contract=self._ablation_raw_delta_contract,
+            ablation_heuristic_segmentation=self._ablation_heuristic_segmentation,
             **({"llm_teacher_max_tokens": int(_teacher_max_tokens_env)}
                if _teacher_max_tokens_env is not None else {}),
         )
@@ -494,6 +505,9 @@ class PerGameSkillBankManager:
         seed_bank_dir: Optional[str] = None,
         process_executor: Optional[ProcessPoolExecutor] = None,
         unified_role_rollouts: bool = False,
+        ablation_no_contract: bool = False,
+        ablation_raw_delta_contract: bool = False,
+        ablation_heuristic_segmentation: bool = False,
     ):
         from trainer.coevolution.config import bank_keys_for_game, resolve_bank_key
 
@@ -517,6 +531,9 @@ class PerGameSkillBankManager:
                     executor=executor,
                     report_dir=str(Path(sub_dir) / "reports"),
                     game_name=game,
+                    ablation_no_contract=ablation_no_contract,
+                    ablation_raw_delta_contract=ablation_raw_delta_contract,
+                    ablation_heuristic_segmentation=ablation_heuristic_segmentation,
                 )
 
         self._bank_dir = bank_dir

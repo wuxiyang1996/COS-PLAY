@@ -731,12 +731,18 @@ def _build_skill_naming_prompt(
         "RULES:",
         "- The NAME must be a concrete imperative verb phrase (2-6 words) describing",
         "  the actual game action. Reference game objects, mechanics, or goals.",
-        "- The DESCRIPTION must be specific: describe WHAT the skill does and WHEN",
-        "  to invoke it. Avoid generic phrases like 'applies effects' or 'does skill'.",
+        "- The DESCRIPTION must be prescriptive advice to a player (1-2 sentences):",
+        "  say WHEN to invoke the skill (triggering situation), WHAT to do",
+        "  (concrete actions), and one pitfall to AVOID if the segments show one.",
+        "  Good: 'When the target object is not visible, open each unsearched",
+        "  container once and take the object as soon as it appears; avoid",
+        "  revisiting containers already searched.'",
+        "  Bad: 'This skill changes locations and transitions the phase.'",
+        "  (effect restatement — never do this)",
         "- Use snake_case or short phrases (e.g. \"pick_up_onion\", \"clear_bottom_row\").",
         "",
         "Return ONLY a JSON object (no extra text):",
-        '{"name": "short skill name", "description": "one line description"}',
+        '{"name": "short skill name", "description": "prescriptive 1-2 sentence advice"}',
     ])
     return "\n".join(parts)
 

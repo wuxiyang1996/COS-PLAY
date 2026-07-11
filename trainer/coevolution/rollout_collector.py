@@ -88,6 +88,9 @@ class EpisodeSpec:
     # Multi-role fields (populated only in unified_role_rollouts mode)
     assigned_role: Optional[str] = None
     assigned_role_index: Optional[int] = None
+    # ALFWorld split/task_types (e.g. "eval_out_of_distribution", [1,2,...])
+    alfworld_split: Optional[str] = None
+    alfworld_task_types: Optional[List[int]] = None
 
 
 def build_lpt_schedule(
@@ -96,6 +99,8 @@ def build_lpt_schedule(
     *,
     episodes_per_game_overrides: Optional[Dict[str, int]] = None,
     unified_role_rollouts: bool = False,
+    alfworld_split: Optional[str] = None,
+    alfworld_task_types: Optional[List[int]] = None,
 ) -> List[EpisodeSpec]:
     """Build an LPT-ordered list of episode specs.
 
@@ -137,6 +142,9 @@ def build_lpt_schedule(
                 elif g == "diplomacy":
                     spec.assigned_role_index = i % len(DIPLOMACY_POWERS)
                     spec.assigned_role = DIPLOMACY_POWERS[spec.assigned_role_index]
+            if g == "alfworld":
+                spec.alfworld_split = alfworld_split
+                spec.alfworld_task_types = alfworld_task_types
             specs.append(spec)
 
         buckets[g] = specs
@@ -176,17 +184,26 @@ async def collect_rollouts(
     """
     _unified = getattr(config, "unified_role_rollouts", False)
     _overrides = getattr(config, "episodes_per_game_overrides", {})
+    _alf_split = getattr(config, "alfworld_split", None)
+    _alf_tt = getattr(config, "alfworld_task_types", None)
     schedule = build_lpt_schedule(
         config.games,
         config.episodes_per_game,
         episodes_per_game_overrides=_overrides,
         unified_role_rollouts=_unified,
+        alfworld_split=_alf_split,
+        alfworld_task_types=_alf_tt,
     )
 
     eval_games = getattr(config, "eval_games", [])
     eval_eps = getattr(config, "eval_episodes_per_game", 3)
+    _eval_alf_split = getattr(config, "alfworld_eval_split", "eval_out_of_distribution")
     if eval_games:
-        eval_schedule = build_lpt_schedule(eval_games, eval_eps)
+        eval_schedule = build_lpt_schedule(
+            eval_games, eval_eps,
+            alfworld_split=_eval_alf_split,
+            alfworld_task_types=_alf_tt,
+        )
         for spec in eval_schedule:
             spec.eval_only = True
         schedule.extend(eval_schedule)
@@ -245,6 +262,8 @@ async def collect_rollouts(
                         step_sync=step_sync,
                         opponent_model=_opp_model if spec.game in ("avalon", "diplomacy") else None,
                         opponent_api_base=_opp_base if spec.game in ("avalon", "diplomacy") else None,
+                        alfworld_split=spec.alfworld_split,
+                        alfworld_task_types=spec.alfworld_task_types,
                     )
                     break
                 except Exception as exc:

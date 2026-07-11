@@ -127,6 +127,15 @@ def parse_args() -> argparse.Namespace:
         help="Max concurrent episodes (default: 64)",
     )
     parser.add_argument(
+        "--eval-games", nargs="+", default=None,
+        help="Games for eval-only rollouts (not fed into GRPO). "
+             "Useful for OOD evaluation alongside training.",
+    )
+    parser.add_argument(
+        "--eval-episodes-per-game", type=int, default=10,
+        help="Episodes per eval game per step (default: 10)",
+    )
+    parser.add_argument(
         "--unified-roles", action="store_true",
         help="Enable unified multi-role rollouts for Avalon/Diplomacy. "
              "Deterministically cycles through all roles instead of random "
@@ -253,6 +262,28 @@ def parse_args() -> argparse.Namespace:
              "Mutually exclusive with --no-skillbank.",
     )
 
+    # ── New ablation flags (paper Table 2) ───────────────────────
+    parser.add_argument(
+        "--no-contract", action="store_true",
+        help="Ablation: disable predicate-level effect contracts. "
+             "Stage 3 (contract learn/verify) is skipped, contract "
+             "compatibility scorer is forced to 0, and reward follow "
+             "bonuses are zeroed.  NL skill protocols are kept.",
+    )
+    parser.add_argument(
+        "--raw-delta-contract", action="store_true",
+        help="Ablation: replace multi-instance consensus contracts "
+             "with raw per-instance predicate deltas (B_end − B_start). "
+             "No frequency thresholds, no verification.",
+    )
+    parser.add_argument(
+        "--heuristic-segmentation", action="store_true",
+        help="Ablation: use heuristic-only segmentation.  No learned "
+             "preference scorer, no Viterbi/beam decode, no LLM teacher. "
+             "Boundaries from tag changes + changepoints; skills by "
+             "majority intention tag.",
+    )
+
     # Training schedule
     parser.add_argument(
         "--warmup-steps", type=int, default=None,
@@ -375,6 +406,22 @@ def parse_args() -> argparse.Namespace:
              "Skills are only copied when the game's bank is empty.",
     )
 
+    # ALFWorld split control
+    parser.add_argument(
+        "--alfworld-split", type=str, default=None,
+        help="ALFWorld data split for training rollouts "
+             "(train, eval_in_distribution, eval_out_of_distribution). "
+             "Default: train",
+    )
+    parser.add_argument(
+        "--alfworld-eval-split", type=str, default="eval_out_of_distribution",
+        help="ALFWorld data split for eval rollouts (default: eval_out_of_distribution)",
+    )
+    parser.add_argument(
+        "--alfworld-task-types", nargs="+", type=int, default=None,
+        help="ALFWorld task type IDs to include (1-6). Default: all types.",
+    )
+
     # Debug
     parser.add_argument(
         "--debug-io", action="store_true",
@@ -460,6 +507,9 @@ def main() -> None:
         grpo_enabled=not args.no_grpo,
         disable_skillbank=args.no_skillbank,
         freeze_skillbank=args.freeze_skillbank,
+        ablation_no_contract=args.no_contract,
+        ablation_raw_delta_contract=args.raw_delta_contract,
+        ablation_heuristic_segmentation=args.heuristic_segmentation,
         checkpoint_interval=args.checkpoint_interval,
         wandb_enabled=not args.no_wandb,
         wandb_project=args.wandb_project,
@@ -514,6 +564,18 @@ def main() -> None:
     if args.seed_bank_dir is not None:
         config_kwargs["seed_bank_dir"] = args.seed_bank_dir
 
+    if args.alfworld_split is not None:
+        config_kwargs["alfworld_split"] = args.alfworld_split
+    if args.alfworld_eval_split:
+        config_kwargs["alfworld_eval_split"] = args.alfworld_eval_split
+    if args.alfworld_task_types is not None:
+        config_kwargs["alfworld_task_types"] = args.alfworld_task_types
+
+    if args.eval_games is not None:
+        config_kwargs["eval_games"] = args.eval_games
+    if args.eval_episodes_per_game is not None:
+        config_kwargs["eval_episodes_per_game"] = args.eval_episodes_per_game
+
     if args.run_dir is not None:
         config_kwargs["run_dir"] = args.run_dir
     if args.bank_dir is not None:
@@ -559,6 +621,12 @@ def main() -> None:
         print("  Skill bank:   DISABLED (ablation: action_taking adapter only)")
     elif getattr(config, "freeze_skillbank", False):
         print("  Skill bank:   FROZEN (ablation: decision agent trained, bank LoRAs frozen)")
+    if getattr(config, "ablation_no_contract", False):
+        print("  Ablation:     w/o effect contract (NL protocol only)")
+    if getattr(config, "ablation_raw_delta_contract", False):
+        print("  Ablation:     raw delta contract (no consensus/verification)")
+    if getattr(config, "ablation_heuristic_segmentation", False):
+        print("  Ablation:     heuristic-only segmentation (no learned decoder)")
     print(f"  Bank dir:     {config.bank_dir}")
     print(f"  Adapter dir:  {config.adapter_dir}")
     print(f"  Checkpoint:   every {config.checkpoint_interval} steps → {config.checkpoint_dir}")

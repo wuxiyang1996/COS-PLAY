@@ -511,6 +511,162 @@ def _extract_diplomacy_facts(state: str) -> Dict[str, str]:
     return facts
 
 
+def _extract_webshop_facts(state: str) -> Dict[str, str]:
+    """Extract structured facts from a WebShop observation."""
+    facts: Dict[str, str] = {}
+
+    # Goal/instruction
+    m = re.search(r"Instruction:\s*\[SEP\]\s*(.+?)\s*\[SEP\]", state)
+    if m:
+        goal_text = m.group(1).strip()
+        # Keep (nearly) the full instruction — attribute requirements at the
+        # end (e.g. "machine wash, polyester spandex, price lower than $60")
+        # are exactly what the agent needs to pick the right product.
+        # 250 leaves room for page/price facts within the 400-char summary cap.
+        facts["goal"] = goal_text[:250]
+        # Extract price constraint
+        pm = re.search(r"price lower than (\$?[\d.]+)", goal_text, re.IGNORECASE)
+        if pm:
+            facts["price_limit"] = pm.group(1)
+
+    # Page type
+    if "[SEP] Search" in state and "Page" not in state:
+        facts["page"] = "search_form"
+    elif re.search(r"Page \d+", state):
+        page_m = re.search(r"Page (\d+) \(Total results: (\d+)\)", state)
+        if page_m:
+            facts["page"] = f"results_p{page_m.group(1)}"
+            facts["total_results"] = page_m.group(2)
+        else:
+            facts["page"] = "results"
+    elif "Buy Now" in state or "buy now" in state.lower():
+        facts["page"] = "product_detail"
+    elif re.search(r"\$[\d.]+", state):
+        facts["page"] = "product_detail"
+
+    # Product info on detail page
+    pm = re.search(r"Price:\s*\$([\d.]+)", state)
+    if pm:
+        facts["price"] = f"${pm.group(1)}"
+    rm = re.search(r"Rating:\s*([\d.]+)", state)
+    if rm:
+        facts["rating"] = rm.group(1)
+
+    # Count products visible on results page
+    asin_count = len(re.findall(r"\[SEP\]\s*B[A-Z0-9]{9}\s*\[SEP\]", state))
+    if asin_count:
+        facts["products_visible"] = str(asin_count)
+
+    return facts
+
+
+_ALFWORLD_INSTANCE_RE = re.compile(r"^(.*?)\s*\d+$")
+
+
+def _alfworld_deinstance(name: str) -> str:
+    """Strip the instance number: ``cabinet 7`` → ``cabinet``.
+
+    Instance-numbered predicates (``location=cabinet 7``) never repeat
+    across rooms, so contracts built on them cannot generalize.  The
+    de-instanced type (``location_type=cabinet``) transfers.
+    """
+    m = _ALFWORLD_INSTANCE_RE.match(name.strip())
+    return m.group(1) if m else name.strip()
+
+
+def _extract_alfworld_facts(state: str) -> Dict[str, str]:
+    """Extract structured facts from an ALFWorld observation.
+
+    Emits *transferable* predicates (``location_type``, ``holding``,
+    ``obj_state``, ``target_visible``) alongside the instance-level ones
+    so skill contracts can express effects that generalize across rooms.
+    """
+    facts: Dict[str, str] = {}
+
+    # Task/goal
+    m = re.search(r"Your task is to:\s*(.+?)(?:\.|$)", state, re.MULTILINE)
+    task_txt = ""
+    if m:
+        task_txt = m.group(1).strip()
+        facts["task"] = task_txt[:200]
+
+    # Current location (instance + de-instanced type)
+    m = re.search(r"You arrive at (.+?)\.", state)
+    if m:
+        loc = m.group(1).strip()
+        facts["location"] = loc
+        facts["location_type"] = _alfworld_deinstance(loc)
+    elif re.search(r"You are facing the (.+?)\.", state):
+        loc = re.search(r"You are facing the (.+?)\.", state).group(1).strip()
+        facts["location"] = loc
+        facts["location_type"] = _alfworld_deinstance(loc)
+    elif "middle of a room" in state:
+        facts["location"] = "room_center"
+        facts["location_type"] = "room_center"
+
+    # Objects visible
+    objects = re.findall(r"(?:you see|contains?) (?:a |an |the )?(.+?)(?:\.|,|$)", state, re.IGNORECASE)
+    if objects:
+        obj_str = ", ".join(o.strip() for o in objects[:5])
+        facts["objects"] = obj_str[:100]
+
+    # Inventory (instance + de-instanced object type as `holding`)
+    inv_m = re.search(r"You are carrying:\s*(.+?)(?:\.|$)", state, re.MULTILINE)
+    if inv_m and "nothing" not in inv_m.group(1).lower():
+        inv = inv_m.group(1).strip()
+        facts["inventory"] = inv[:60]
+        facts["holding"] = _alfworld_deinstance(re.sub(r"^(a|an|the)\s+", "", inv))[:40]
+    elif "not carrying anything" in state:
+        facts["inventory"] = "empty"
+    # "You pick up the X from ..." also establishes holding
+    pick_m = re.search(r"You pick up the (.+?) from", state)
+    if pick_m:
+        facts["holding"] = _alfworld_deinstance(pick_m.group(1).strip())[:40]
+
+    # Is a task-relevant object visible in this observation?
+    if task_txt:
+        # Heuristic: nouns from the task, e.g. "put a cool lettuce in
+        # garbagecan" → lettuce/garbagecan
+        stop = {
+            "put", "some", "a", "an", "the", "two", "in", "on", "at",
+            "with", "and", "clean", "cool", "hot", "heat", "cold",
+            "look", "examine", "under", "find", "then",
+        }
+        targets = [w for w in re.findall(r"[a-z]+", task_txt.lower()) if w not in stop]
+        state_low = state.lower()
+        vis = [t for t in set(targets) if re.search(rf"\b{re.escape(t)}\s*\d", state_low)]
+        if vis:
+            facts["target_visible"] = ",".join(sorted(vis)[:3])
+
+    # Pick up / interaction outcomes
+    if "You pick up" in state:
+        facts["action_result"] = "picked_up"
+    elif "You put" in state:
+        facts["action_result"] = "placed"
+    elif "You open" in state:
+        facts["action_result"] = "opened"
+    elif "turn on" in state or "turn off" in state:
+        facts["action_result"] = "toggled"
+    elif "cleaned" in state.lower():
+        facts["action_result"] = "cleaned"
+    elif "heated" in state.lower() or "cooked" in state.lower():
+        facts["action_result"] = "heated"
+    elif "cooled" in state.lower():
+        facts["action_result"] = "cooled"
+    elif "Nothing happens" in state:
+        facts["action_result"] = "no_effect"
+
+    # Persistent object state (survives across steps in obs text)
+    if "cleaned" in state.lower():
+        facts["obj_state"] = "cleaned"
+    elif "heated" in state.lower() or "cooked" in state.lower():
+        facts["obj_state"] = "heated"
+    elif "cooled" in state.lower():
+        facts["obj_state"] = "cooled"
+
+    return facts
+
+
 def _extract_generic_facts(state: str) -> Dict[str, str]:
     facts: Dict[str, str] = {}
     for pat, key in [
@@ -534,6 +690,8 @@ _GAME_EXTRACTORS: Dict[str, Any] = {
     "mario": _extract_mario_facts,
     "avalon": _extract_avalon_facts,
     "diplomacy": _extract_diplomacy_facts,
+    "webshop": _extract_webshop_facts,
+    "alfworld": _extract_alfworld_facts,
 }
 
 

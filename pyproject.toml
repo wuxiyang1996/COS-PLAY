@@ -41,8 +41,14 @@ train = [
     "tensorboard>=2.14",
 ]
 inference = ["vllm>=0.20.0"]
+textenv = [
+    "alfworld>=0.4",
+    "gym>=0.26",
+    "beautifulsoup4>=4.12",
+    "flask>=2.0",
+]
 dev = ["pytest>=7.0"]
-all = ["cos-play[train,inference,dev]"]
+all = ["cos-play[train,inference,textenv,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/wuxiyang1996/COS-PLAY"

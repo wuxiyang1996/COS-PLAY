@@ -270,8 +270,10 @@ def train_single_adapter(
 
     trainer.train()
 
-    peft_model.save_pretrained(out_str)
-    tokenizer.save_pretrained(out_str)
+    _is_main = trainer.is_world_process_zero()
+    if _is_main:
+        peft_model.save_pretrained(out_str)
+        tokenizer.save_pretrained(out_str)
 
     meta = {
         "adapter_name": adapter_name,
@@ -286,10 +288,10 @@ def train_single_adapter(
         "lr": params["lr"],
         "training_type": "sft_coldstart",
     }
-    with open(output_path / "adapter_meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
-
-    logger.info("Saved adapter '%s' to %s", adapter_name, out_str)
+    if _is_main:
+        with open(output_path / "adapter_meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
+        logger.info("Saved adapter '%s' to %s", adapter_name, out_str)
 
     # Unwrap to reuse base model for next adapter
     base_model_unwrapped = peft_model.unload()
@@ -355,7 +357,8 @@ def train_all_adapters(config=None, gpu: Optional[int] = None, **kwargs) -> dict
         torch_dtype=dtype,
         trust_remote_code=True,
     )
-    base_model = base_model.to("cuda")
+    _local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    base_model = base_model.to(f"cuda:{_local_rank}")
     base_model.config.use_cache = False
     logger.info(
         "Model loaded on %s — %.1f GB GPU memory allocated",
@@ -490,6 +493,11 @@ def _train_parallel(config, gpu_ids: List[int]) -> dict:
         shared_args.append("--no_bf16")
     if config.games:
         shared_args.extend(["--games"] + config.games)
+    from trainer.SFT.config import DECISION_DATA_DIR, SKILLBANK_DATA_DIR
+    if config.decision_data_dir and config.decision_data_dir != str(DECISION_DATA_DIR):
+        shared_args.extend(["--decision_data_dir", config.decision_data_dir])
+    if config.skillbank_data_dir and config.skillbank_data_dir != str(SKILLBANK_DATA_DIR):
+        shared_args.extend(["--skillbank_data_dir", config.skillbank_data_dir])
 
     t0 = time.time()
     processes: List[tuple] = []

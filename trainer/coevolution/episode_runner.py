@@ -45,6 +45,39 @@ EVOLVER_GAMES_SET = {"diplomacy", "avalon"}
 GAMINGAGENT_GAMES = {
     "twenty_forty_eight", "sokoban", "candy_crush", "tetris",
 }
+# Text-based environments (WebShop, ALFWorld) with their own NL wrappers
+TEXT_ENV_GAMES = {"webshop", "alfworld"}
+
+# ALFWorld PDDL parsing is NOT thread-safe — concurrent env creation AND
+# stepping corrupt shared parser state (pop-from-empty-list, NoneType errors).
+# Serialize ALL ALFWorld operations (init/reset/step/close) with a
+# module-level threading lock.  Steps are fast in-memory PDDL updates (~ms),
+# so lock contention across concurrent episodes is negligible.
+import threading
+_ALFWORLD_INIT_LOCK = threading.Lock()
+
+
+class _LockedEnvProxy:
+    """Serializes env calls for thread-unsafe backends (ALFWorld/TextWorld)."""
+
+    def __init__(self, env: Any, lock: threading.Lock):
+        object.__setattr__(self, "_env", env)
+        object.__setattr__(self, "_lock", lock)
+
+    def reset(self, *args, **kwargs):
+        with self._lock:
+            return self._env.reset(*args, **kwargs)
+
+    def step(self, *args, **kwargs):
+        with self._lock:
+            return self._env.step(*args, **kwargs)
+
+    def close(self):
+        with self._lock:
+            return self._env.close()
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_env"), name)
 
 
 def _lazy_imports():
@@ -125,6 +158,39 @@ SYSTEM_PROMPT = (
     "Output format (strict):\n"
     "ACTION: <number>\n"
 )
+
+# Text envs (WebShop / ALFWorld): sparse-reward, instruction-following tasks.
+# The prompt pins the task on every step and shows the RAW observation
+# (product titles/prices, room contents) instead of the compressed summary —
+# the summary strips exactly the information needed to satisfy the goal.
+# This format matches the SFT cold-start data exactly (see
+# labeling/label_episodes_with_skills.py::_TEXTENV_ACTION_SYSTEM).
+TEXTENV_SYSTEM_PROMPT = (
+    "You are an expert agent in a text-based environment. "
+    "You receive a task, the current observation, and a numbered list of "
+    "available actions. Choose exactly one action by its NUMBER.\n\n"
+    "Rules:\n"
+    "- Re-read the task: every requirement matters "
+    "(attributes, options, price limits, target locations).\n"
+    "- Study the observation carefully before choosing.\n"
+    "- NEVER repeat the same action more than 2 times in a row — try something different.\n"
+    "- For a search action, write the full query instead of a number: "
+    "ACTION: search[<your keywords>]\n\n"
+    "Output format (strict):\n"
+    "REASONING: <1-2 sentences>\n"
+    "ACTION: <number or search[keywords]>\n"
+)
+
+
+def _strip_goal_prefix(obs: str) -> str:
+    """Drop the wrapper-prepended ``Goal: ...\\n\\n`` block (WebShop) so the
+    pinned ``Task:`` line is not duplicated in the prompt."""
+    if obs.startswith("Goal:"):
+        sep = obs.find("\n\n")
+        if sep > 0:
+            return obs[sep + 2:]
+    return obs
+
 
 SKILL_SELECTION_SYSTEM_PROMPT = (
     "You are an expert game strategist. "
@@ -603,25 +669,41 @@ async def _generate_intention(
 
     game_label = game_name.replace("_", " ") if game_name else "game"
 
-    examples = (
-        "Examples:\n"
-        "  tetris, stack_h=14, holes=8 → [SURVIVE] reduce stack height before game over\n"
-        "  tetris, holes=2, stack_h=6 → [SETUP] position piece for future line clear\n"
-        "  tetris, full row forming → [CLEAR] complete the line to score points\n"
-        "  2048, empty=3, max=256 → [MERGE] combine tiles to free board space\n"
-        "  2048, large tile in corner → [POSITION] keep max tile anchored in corner\n"
-        "  2048, board nearly full → [SURVIVE] avoid game over by creating space\n"
-        "  candy_crush, moves=4, target=500 → [CLEAR] maximize cascade combos now\n"
-        "  candy_crush, special candy available → [EXECUTE] activate combo for big score\n"
-        "  candy_crush, board cluttered → [OPTIMIZE] clear blockers to open matches\n"
-        "  sokoban, box misaligned → [POSITION] push box toward its target square\n"
-        "  sokoban, path blocked by wall → [NAVIGATE] find route around obstacle\n"
-        "  avalon, suspicious player → [DEFEND] block suspected spy from mission\n"
-        "  avalon, team forming → [ATTACK] push to lead the next mission\n"
-        "  diplomacy, ally requesting support → [BUILD] strengthen alliance for next turn\n"
-        "  diplomacy, unexplored border → [EXPLORE] scout neighbor's intentions\n"
-        "  pokemon, item on ground → [COLLECT] pick up item before moving on\n"
-    )
+    if game_name in TEXT_ENV_GAMES:
+        # Task-semantic examples aligned with the alfworld/webshop
+        # phase vocabulary (search/acquire/transform/deliver;
+        # query/browse/verify/purchase).
+        examples = (
+            "Examples:\n"
+            "  alfworld, target object not found yet → [EXPLORE] search unopened drawers for the fork\n"
+            "  alfworld, target visible on countertop → [COLLECT] take the mug from countertop\n"
+            "  alfworld, holding mug, task says hot → [EXECUTE] heat the mug with microwave\n"
+            "  alfworld, holding cooled lettuce → [POSITION] put lettuce in the garbagecan\n"
+            "  alfworld, need to reach the safe → [NAVIGATE] go to the safe in the bedroom\n"
+            "  webshop, on search page → [EXPLORE] search for red 3oz bottles under $20\n"
+            "  webshop, results list shown → [NAVIGATE] open the best-matching product\n"
+            "  webshop, on product page → [EXECUTE] select 3oz option then buy\n"
+        )
+    else:
+        examples = (
+            "Examples:\n"
+            "  tetris, stack_h=14, holes=8 → [SURVIVE] reduce stack height before game over\n"
+            "  tetris, holes=2, stack_h=6 → [SETUP] position piece for future line clear\n"
+            "  tetris, full row forming → [CLEAR] complete the line to score points\n"
+            "  2048, empty=3, max=256 → [MERGE] combine tiles to free board space\n"
+            "  2048, large tile in corner → [POSITION] keep max tile anchored in corner\n"
+            "  2048, board nearly full → [SURVIVE] avoid game over by creating space\n"
+            "  candy_crush, moves=4, target=500 → [CLEAR] maximize cascade combos now\n"
+            "  candy_crush, special candy available → [EXECUTE] activate combo for big score\n"
+            "  candy_crush, board cluttered → [OPTIMIZE] clear blockers to open matches\n"
+            "  sokoban, box misaligned → [POSITION] push box toward its target square\n"
+            "  sokoban, path blocked by wall → [NAVIGATE] find route around obstacle\n"
+            "  avalon, suspicious player → [DEFEND] block suspected spy from mission\n"
+            "  avalon, team forming → [ATTACK] push to lead the next mission\n"
+            "  diplomacy, ally requesting support → [BUILD] strengthen alliance for next turn\n"
+            "  diplomacy, unexplored border → [EXPLORE] scout neighbor's intentions\n"
+            "  pokemon, item on ground → [COLLECT] pick up item before moving on\n"
+        )
 
     prompt = (
         f"{game_label}. Action: {last_action}\n"
@@ -761,6 +843,28 @@ def _build_recent_context(recent_actions: List[str], recent_rewards: List[float]
         lines.append("WARNING: Recent actions got 0 reward. Try a DIFFERENT action!")
     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def _skill_bank_size(skill_bank: Any) -> int:
+    """Number of skills in the bank, handling all bank-like objects.
+
+    Rollouts may receive a raw bank (has ``skill_ids``/``__len__``) or a
+    ``SkillQueryEngine`` wrapper (has ``list_all``). The old check only
+    handled the former, so query engines silently disabled all skill
+    retrieval/selection during rollouts.
+    """
+    if skill_bank is None:
+        return 0
+    try:
+        if hasattr(skill_bank, "__len__"):
+            return len(skill_bank)
+        if hasattr(skill_bank, "skill_ids"):
+            return len(list(skill_bank.skill_ids))
+        if hasattr(skill_bank, "list_all"):
+            return len(skill_bank.list_all())
+    except Exception:
+        return 0
+    return 0
 
 
 def _format_skill_guidance_for_prompt(
@@ -957,6 +1061,14 @@ def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
         if tool_name in _POKEMON_TOOL_NAMES:
             return raw.strip()
 
+    # WebShop parametric search: the menu lists the placeholder
+    # ``search[query]`` but the policy must emit the actual keywords,
+    # e.g. ``search[slim fit jumpsuit green stripe]`` — pass it through.
+    if re.match(r"^search\[.{2,}\]$", raw.strip(), re.IGNORECASE) and any(
+        a.lower().startswith("search[") for a in valid_actions
+    ):
+        return raw.strip()
+
     raw_compact = re.sub(r"\s+", "", raw_lower)
     compact_map = {re.sub(r"\s+", "", a.lower()): a for a in valid_actions}
     if raw_compact in compact_map:
@@ -992,6 +1104,21 @@ def _apply_anti_repetition(
         alternatives = [a for a in valid_actions if a != action]
         if alternatives:
             return random.choice(alternatives)
+
+    # Detect oscillation: if last 4+ actions use only 1-2 unique values
+    # and rewards are all 0, break the loop with a random unexplored action
+    if game in TEXT_ENV_GAMES and len(recent_actions) >= 4:
+        last6 = recent_actions[-6:] if len(recent_actions) >= 6 else recent_actions[-4:]
+        last6_rewards = recent_rewards[-len(last6):]
+        unique_actions = set(last6 + [action])
+        if len(unique_actions) <= 2 and sum(last6_rewards) <= 0:
+            # Prefer "go to" actions for exploration in ALFWorld
+            tried = set(recent_actions)
+            explore = [a for a in valid_actions if a not in tried and a.startswith("go to")]
+            if not explore:
+                explore = [a for a in valid_actions if a not in unique_actions]
+            if explore:
+                return random.choice(explore)
 
     if game == "pokemon_red" and len(recent_actions) >= 4:
         last6 = recent_actions[-6:]
@@ -1186,6 +1313,8 @@ async def run_episode_async(
     step_sync: Any = None,
     opponent_model: Optional[str] = None,
     opponent_api_base: Optional[str] = None,
+    alfworld_split: Optional[str] = None,
+    alfworld_task_types: Optional[List[int]] = None,
 ) -> EpisodeResult:
     """Run one game episode asynchronously.
 
@@ -1297,6 +1426,35 @@ async def run_episode_async(
             opponent_api_base=opponent_api_base,
         ))
 
+    elif game in TEXT_ENV_GAMES:
+        if game == "webshop":
+            from env_wrappers.webshop_nl_wrapper import make_webshop_env
+            if exe:
+                env = await loop.run_in_executor(
+                    exe, make_webshop_env, max_steps,
+                )
+            else:
+                env = make_webshop_env(max_steps=max_steps)
+        elif game == "alfworld":
+            from env_wrappers.alfworld_nl_wrapper import make_alfworld_env
+            import functools
+
+            def _alf_factory_locked():
+                with _ALFWORLD_INIT_LOCK:
+                    raw = make_alfworld_env(
+                        max_steps=max_steps,
+                        split=alfworld_split or "train",
+                        task_types=alfworld_task_types,
+                    )
+                return _LockedEnvProxy(raw, _ALFWORLD_INIT_LOCK)
+
+            if exe:
+                env = await loop.run_in_executor(exe, _alf_factory_locked)
+            else:
+                env = _alf_factory_locked()
+        else:
+            raise ValueError(f"Unknown text-env game: {game}")
+
     else:
         if exe:
             base_env = await loop.run_in_executor(
@@ -1343,10 +1501,7 @@ async def run_episode_async(
     structured_state = info.get("structured_state")
     current_info = info
 
-    bank_available = skill_bank is not None and (
-        hasattr(skill_bank, "__len__") and len(skill_bank) > 0
-        or hasattr(skill_bank, "skill_ids") and len(list(skill_bank.skill_ids)) > 0
-    )
+    bank_available = _skill_bank_size(skill_bank) > 0
 
     grpo_records: List[GRPORecord] = []
     experiences: List[Dict[str, Any]] = []
@@ -1519,7 +1674,10 @@ async def run_episode_async(
         # We inject it as "Assigned subgoal" so the LoRA follows it.
         urgency_line = f"URGENCY: {urgency}\n" if urgency else ""
         skill_context = ""
-        if guidance and guidance.get("skill_id"):
+        # Text envs get the full "--- Active Skill ---" block (skill_text)
+        # instead; the SFT data has only the block, so the inline line
+        # would be a train/rollout format mismatch.
+        if game not in TEXT_ENV_GAMES and guidance and guidance.get("skill_id"):
             sk_name = guidance.get("skill_name", guidance["skill_id"])
             sk_hint = guidance.get("execution_hint", "")
             skill_context = f"Active skill: {sk_name}"
@@ -1557,6 +1715,20 @@ async def run_episode_async(
                 f"{_POKEMON_ACTION_SECTION}"
             )
             action_prompt = _POKEMON_SYSTEM_PROMPT + "\n" + action_user
+        elif game in TEXT_ENV_GAMES:
+            _goal_txt = str((current_info or {}).get("goal", "") or "").strip()
+            if _goal_txt.lower().startswith("instruction:"):
+                _goal_txt = _goal_txt[len("instruction:"):].strip()
+            _raw_obs = _strip_goal_prefix(obs_nl)
+            action_user = (
+                f"Task: {_goal_txt}\n\n"
+                f"Observation:\n{_raw_obs[:3000]}\n\n"
+                f"Subgoal: {assigned_subgoal}\n"
+                f"{urgency_line}{skill_context}{recent_context}"
+                f"Available actions (pick ONE by number):\n{_format_numbered_actions(step_actions)}\n\n"
+                f"Choose the best action. Output REASONING then ACTION number."
+            )
+            action_prompt = TEXTENV_SYSTEM_PROMPT + skill_text + "\n" + action_user
         else:
             action_user = (
                 f"Game state:\n\n{summary_for_action}\n\n"
@@ -1570,11 +1742,19 @@ async def run_episode_async(
         if step_sync is not None:
             await step_sync.arrive()
 
+        if game in TEXT_ENV_GAMES:
+            # No bare "\n\n" stop: REASONING and ACTION are newline-separated
+            # but a stray blank line must not cut off the ACTION line.
+            _action_stop = ["\n\nAvailable", "\n\nTask:", "\n\nObservation"]
+            _action_max_tokens = 160
+        else:
+            _action_stop = ["\n\nAvailable", "\n\nGame state", "\n\n---", "\n\n"]
+            _action_max_tokens = 128
         action_result = await vllm_client.generate_chat(
             [{"role": "user", "content": action_prompt}],
             adapter="action_taking",
-            temperature=temperature, max_tokens=128,
-            stop=["\n\nAvailable", "\n\nGame state", "\n\n---", "\n\n"],
+            temperature=temperature, max_tokens=_action_max_tokens,
+            stop=_action_stop,
         )
         action, reasoning, parsed_intention = _parse_action_response(
             action_result.text, step_actions,
@@ -1630,7 +1810,16 @@ async def run_episode_async(
                 _explore_bonus = pokemon_explore.update(next_info) if pokemon_explore else 0.0
                 _action_reward = float(reward) + _explore_bonus + skill_tracker._intrinsic_bonus
             else:
-                action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
+                # Text envs train on REASONING/ACTION only (no SUBGOAL line) —
+                # the completion must match what the policy actually emits.
+                # WebShop search actions keep the full query string.
+                _act_str: Any = action_num
+                _sg_line = subgoal_line
+                if game in TEXT_ENV_GAMES:
+                    _sg_line = ""
+                    if str(action).lower().startswith("search["):
+                        _act_str = str(action)
+                action_completion = f"{_sg_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {_act_str}"
                 _action_reward = float(reward) + skill_tracker._intrinsic_bonus + 1.0
             grpo_records.append(GRPORecord(
                 adapter="action_taking", game=game, episode_id=episode_id, step=step_count,
@@ -1734,7 +1923,9 @@ async def run_episode_async(
         # Skip for games with sparse rewards (reward only at game end).
         # Sokoban now uses distance-based reward shaping, so it produces
         # positive rewards on productive pushes and can use stuck detection.
-        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red"}
+        # webshop/alfworld: reward arrives ONLY at task completion, so the
+        # rolling-window check would kill every episode at step 20.
+        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red", "webshop", "alfworld"}
         if (game not in _STUCK_EXEMPT_GAMES
                 and step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window
@@ -1752,6 +1943,22 @@ async def run_episode_async(
 
     for rec in grpo_records:
         rec.episode_length = max(step_count, 1)
+
+    # Sparse text envs (reward only at task completion): the per-step
+    # shaped reward is a constant (+1.0 format bonus), which gives GRPO
+    # zero within-group advantage.  Broadcast the trajectory outcome to
+    # every decision-agent record instead, so successful episodes get
+    # positive advantage relative to failed ones under per-game
+    # normalization.  A small step-efficiency bonus breaks ties among
+    # successful episodes (shorter = better).
+    if game in TEXT_ENV_GAMES:
+        _eff_bonus = 0.0
+        if total_reward > 0 and max_steps > 0:
+            _eff_bonus = 0.2 * (1.0 - min(step_count / max_steps, 1.0))
+        _traj_reward = float(total_reward) + _eff_bonus
+        for rec in grpo_records:
+            if rec.adapter in ("action_taking", "skill_selection"):
+                rec.reward = _traj_reward
 
     wall_time = time.monotonic() - t0
     return EpisodeResult(

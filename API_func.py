@@ -117,12 +117,19 @@ def ask_gpt(question, model="gpt-4o", temperature=0.7, max_tokens=2000):
         return ask_openrouter(question, model=openrouter_model, temperature=temperature, max_tokens=max_tokens)
     openai.api_key = openai_api_key
     try:
-        response = openai.chat.completions.create(
+        kwargs = dict(
             model=model,
             messages=[{"role": "user", "content": question}],
-            temperature=temperature,
-            max_tokens=max_tokens,
         )
+        # Reasoning models (gpt-5*, o1/o3/o4) reject `max_tokens` and
+        # non-default temperature on the direct OpenAI API.
+        _m = model.lower()
+        if _m.startswith(("gpt-5", "o1", "o3", "o4")):
+            kwargs["max_completion_tokens"] = max(max_tokens, 4000)
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["max_tokens"] = max_tokens
+        response = openai.chat.completions.create(**kwargs)
         return response.choices[0].message.content
     except Exception as e:
         return f"Error calling GPT API: {str(e)}"

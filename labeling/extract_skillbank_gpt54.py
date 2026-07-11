@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -968,23 +969,39 @@ def extract_skills_for_game(
     config = PipelineConfig(
         bank_path=bank_path,
         env_name="llm",
+        # Without game_name the phase detector and default seed vocab fall
+        # back to "generic" — temporal phases + meaningless skill IDs.
+        game_name=game_name,
         merge_radius=5,
         extractor_model=model,
         segmentation_method="dp",
         preference_iterations=1,
         new_skill_penalty=2.0,
         eff_freq=0.5,
-        min_instances_per_skill=1,
+        # ≥3 instances: single-segment skills are noise (matches the
+        # co-evolution pipeline settings in skillbank_pipeline.py).
+        min_instances_per_skill=3,
         start_end_window=3,
-        new_pool_min_cluster_size=1,
+        new_pool_min_cluster_size=2,
         new_pool_min_consistency=0.3,
         new_pool_min_distinctiveness=0.15,
-        min_new_cluster_size=1,
+        min_new_cluster_size=2,
         llm_model=model,
         report_dir=str(output_dir / "reports"),
     )
 
     agent = SkillBankAgent(config=config)
+
+    # Pre-seeded bank support: if the output dir already contains a
+    # skill_bank.jsonl (e.g. hand-crafted SkillRL-style seeds), load it so
+    # segmentation labels segments against the seed skills instead of
+    # spawning new ones from scratch.
+    if Path(bank_path).exists() and Path(bank_path).stat().st_size > 0:
+        try:
+            agent.load()
+            print(f"    Pre-seeded bank loaded: {len(agent.skill_ids)} skills from {bank_path}")
+        except Exception as exc:
+            print(f"    [WARN] Failed to load pre-seeded bank: {exc}")
 
     episodes: List[Episode] = []
     for ep_data in episodes_data:
@@ -1571,6 +1588,13 @@ def main():
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
+        "--seed_bank", type=str, default=None,
+        help=(
+            "Optional seed skill_bank.jsonl. For a single --games target, it "
+            "is copied into that game's output directory before extraction."
+        ),
+    )
+    parser.add_argument(
         "--games", type=str, nargs="+", default=None,
         help="Only process these games",
     )
@@ -1671,6 +1695,17 @@ def main():
         return
 
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.seed_bank:
+        if not args.games or len(args.games) != 1:
+            parser.error("--seed_bank requires exactly one game in --games")
+        seed_path = Path(args.seed_bank)
+        if not seed_path.is_file():
+            parser.error(f"Seed bank not found: {seed_path}")
+        seeded_game_dir = output_dir / args.games[0]
+        seeded_game_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(seed_path, seeded_game_dir / "skill_bank.jsonl")
+        print(f"  Seed bank:     {seed_path}")
 
     overall_t0 = time.time()
     all_stats: List[Dict[str, Any]] = []

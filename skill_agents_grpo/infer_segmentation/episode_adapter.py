@@ -133,6 +133,10 @@ def _extract_predicates(experiences: list) -> List[Optional[dict]]:
     prefix, we decompose it into ``tag_<tag>`` one-hot keys and a
     ``<tag>_completed`` flag so that ``_effects_compat_score`` can match
     intention-extracted contracts (Strategy B).
+
+    For text environments (webshop/alfworld) that lack intention tags but
+    carry ``reward_details`` (effect-tag dicts), those are merged in as
+    one-hot predicates so the segmentation scorer can still leverage them.
     """
     from skill_agents_grpo.boundary_proposal.signal_extractors import parse_intention_tag
 
@@ -152,6 +156,13 @@ def _extract_predicates(experiences: list) -> List[Optional[dict]]:
                 preds[f"{tag.lower()}_completed"] = float(
                     getattr(exp, "done", False)
                 )
+
+        # Text-env effect tags (webshop/alfworld reward_details)
+        reward_details = getattr(exp, "reward_details", None)
+        if reward_details and isinstance(reward_details, dict) and intent is None:
+            for effect_key, effect_val in reward_details.items():
+                if str(effect_val).lower() in ("true", "1"):
+                    preds[f"eff_{effect_key}"] = 1.0
 
         if getattr(exp, "done", None) is not None:
             preds["done"] = exp.done
@@ -332,10 +343,83 @@ def _decode(
     predicates: Optional[List[Optional[dict]]],
     config: SegmentationConfig,
 ) -> SegmentationResult:
-    """Run DP or beam decoder."""
+    """Run DP, beam, or heuristic decoder."""
     if config.method == "beam":
         return beam_decode(candidates, T, scorer, observations, actions, predicates, config)
+    if config.method == "heuristic":
+        return _heuristic_decode(candidates, T, scorer, observations, actions, predicates, config)
     return viterbi_decode(candidates, T, scorer, observations, actions, predicates, config)
+
+
+def _heuristic_decode(
+    candidates: List[int],
+    T: int,
+    scorer: SegmentScorer,
+    observations: Sequence,
+    actions: Sequence,
+    predicates: Optional[List[Optional[dict]]],
+    config: SegmentationConfig,
+) -> SegmentationResult:
+    """Heuristic-only segmentation ablation.
+
+    Cuts at every candidate boundary (from tag changes, changepoints,
+    events) and assigns each segment the skill with the best intention_fit
+    score.  No learned preference scorer, no Viterbi/beam optimization.
+    Falls back to ``__NEW__`` when no skill fits.
+    """
+    from skill_agents_grpo.infer_segmentation.diagnostics import (
+        SegmentationResult,
+        SegmentDiagnostic,
+        SkillCandidate,
+    )
+    from skill_agents_grpo.infer_segmentation.scorer import NEW_SKILL
+
+    boundaries = sorted(set(candidates) | {0, T - 1})
+    if boundaries[0] != 0:
+        boundaries = [0] + boundaries
+    if boundaries[-1] != T - 1:
+        boundaries.append(T - 1)
+
+    segments: List[SegmentDiagnostic] = []
+    prev_skill = NEW_SKILL
+    skills = scorer.skill_names
+
+    for idx in range(len(boundaries) - 1):
+        seg_start = boundaries[idx]
+        seg_end = boundaries[idx + 1]
+        if idx > 0:
+            seg_start = boundaries[idx]
+
+        best_skill = NEW_SKILL
+        best_score = float("-inf")
+
+        for sk in skills:
+            score = scorer.intention_fit(sk, seg_start, seg_end)
+            if score > best_score:
+                best_score = score
+                best_skill = sk
+
+        seg_diag = SegmentDiagnostic(
+            start=seg_start,
+            end=seg_end,
+            assigned_skill=best_skill,
+            top_candidates=[
+                SkillCandidate(skill=best_skill, score=best_score),
+            ],
+        )
+        segments.append(seg_diag)
+        prev_skill = best_skill
+
+    total_score = sum(
+        scorer.intention_fit(s.assigned_skill, s.start, s.end)
+        for s in segments
+    )
+
+    return SegmentationResult(
+        segments=segments,
+        total_score=total_score,
+        n_boundaries=len(boundaries) - 2,
+    )
 
 
 def _segments_to_sub_episodes(result, experiences: list, task, outcome_length: int) -> list:

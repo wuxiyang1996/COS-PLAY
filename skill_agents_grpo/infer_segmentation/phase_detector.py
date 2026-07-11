@@ -491,6 +491,108 @@ def make_compound_label(phase: str, tag: str) -> str:
     return f"{phase}:{tag}"
 
 
+def _extract_alfworld_phases(experiences: Sequence) -> List[str]:
+    """ALFWorld: task-semantic phases from the action stream.
+
+    - ``search``    — not holding anything, looking for the target object
+    - ``acquire``   — the take action itself
+    - ``transform`` — heat/cool/clean/use steps (and travel while a
+                      required transform is still pending)
+    - ``deliver``   — holding the object, moving to / placing at the goal
+
+    These phases combine with intention tags into transferable skill
+    identities like ``search:EXPLORE`` or ``deliver:POSITION`` instead of
+    temporal buckets (``early:CLEAR``) that carry no task meaning.
+    """
+    def _action_str(exp) -> str:
+        a = getattr(exp, "action", None)
+        if a is None and isinstance(exp, dict):
+            a = exp.get("action")
+        return str(a or "").strip().lower()
+
+    # Does the task require a transform step? (heat/cool/clean/examine)
+    task_txt = ""
+    for exp in experiences:
+        s = _get_state_str(exp)
+        m = re.search(r"your task is to:\s*(.+?)(?:\.|\n|$)", s, re.IGNORECASE)
+        if m:
+            task_txt = m.group(1).lower()
+            break
+    needs_transform = any(
+        w in task_txt for w in ("heat", "cool", "clean", "hot", "cold", "examine", "look at")
+    )
+
+    _TRANSFORM_PREFIXES = ("heat ", "cool ", "clean ", "use ", "slice ")
+
+    phases: List[str] = []
+    holding = False
+    transformed = False
+    for exp in experiences:
+        action = _action_str(exp)
+        if action.startswith("take ") or action.startswith("pick "):
+            phases.append("acquire")
+            holding = True
+        elif action.startswith(_TRANSFORM_PREFIXES):
+            phases.append("transform")
+            transformed = True
+        elif action.startswith("put ") or action.startswith("move "):
+            phases.append("deliver")
+            holding = False
+        elif holding:
+            # Travelling with the object: still transforming or delivering?
+            if needs_transform and not transformed:
+                phases.append("transform")
+            else:
+                phases.append("deliver")
+        else:
+            phases.append("search")
+
+    return phases
+
+
+def _extract_webshop_phases(experiences: Sequence) -> List[str]:
+    """WebShop: task-semantic phases from the action stream.
+
+    - ``query``    — issuing a search
+    - ``browse``   — navigating result pages / going back
+    - ``verify``   — inspecting a product page (options, description)
+    - ``purchase`` — the buy action
+    """
+    def _action_str(exp) -> str:
+        a = getattr(exp, "action", None)
+        if a is None and isinstance(exp, dict):
+            a = exp.get("action")
+        return str(a or "").strip().lower()
+
+    _NAV_CLICKS = ("click[< prev", "click[next >", "click[back to search")
+    _PRODUCT_CODE = re.compile(r"^click\[[a-z0-9]{8,}\]$")
+
+    phases: List[str] = []
+    on_product_page = False
+    for exp in experiences:
+        action = _action_str(exp)
+        if action.startswith("search["):
+            phases.append("query")
+            on_product_page = False
+        elif action.startswith("click[buy now"):
+            phases.append("purchase")
+        elif _PRODUCT_CODE.match(action):
+            phases.append("verify")
+            on_product_page = True
+        elif action.startswith(_NAV_CLICKS):
+            phases.append("browse")
+            on_product_page = False
+        elif action.startswith("click[") and on_product_page:
+            # Option/description/feature clicks on a product page
+            phases.append("verify")
+        elif action.startswith("click["):
+            phases.append("browse")
+        else:
+            phases.append("browse")
+
+    return phases
+
+
 _GAME_EXTRACTORS: Dict[str, Any] = {
     "twenty_forty_eight": _extract_2048_phases,
     "2048": _extract_2048_phases,
@@ -502,4 +604,6 @@ _GAME_EXTRACTORS: Dict[str, Any] = {
     "diplomacy": _extract_diplomacy_phases,
     "pokemon_red": _extract_pokemon_phases,
     "pokemon": _extract_pokemon_phases,
+    "alfworld": _extract_alfworld_phases,
+    "webshop": _extract_webshop_phases,
 }

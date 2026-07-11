@@ -98,6 +98,11 @@ class PipelineConfig:
     min_child_size: int = 3
     min_new_cluster_size: int = 5
 
+    # ── Ablation flags (propagated from CoEvolutionConfig) ─────────
+    ablation_no_contract: bool = False
+    ablation_raw_delta_contract: bool = False
+    ablation_heuristic_segmentation: bool = False
+
     # Convergence
     max_iterations: int = 5
     convergence_margin_std: float = 0.5
@@ -290,6 +295,21 @@ class SkillBankAgent:
             "menu:SETUP", "menu:OPTIMIZE",
             "dialog:EXPLORE", "dialog:EXECUTE",
         ],
+        # Text envs use task-semantic phases (see phase_detector) so the
+        # skill identity encodes what the agent is doing in task terms,
+        # not a temporal bucket.
+        "alfworld": [
+            "search:EXPLORE", "search:NAVIGATE",
+            "acquire:COLLECT",
+            "transform:EXECUTE", "transform:NAVIGATE",
+            "deliver:POSITION", "deliver:NAVIGATE", "deliver:EXECUTE",
+        ],
+        "webshop": [
+            "query:EXPLORE", "query:SETUP",
+            "browse:EXPLORE", "browse:NAVIGATE",
+            "verify:EXPLORE", "verify:EXECUTE",
+            "purchase:EXECUTE",
+        ],
     }
 
     # Generic seeds for unknown games: temporal phases × common tags.
@@ -389,15 +409,29 @@ class SkillBankAgent:
         T = len(episode.experiences)
         duration_cfg = get_duration_prior_for_game(_game, episode_length=T)
 
+        # ── Ablation: force contract feedback off ─────────────────────
+        _cf_mode = cfg.contract_feedback_mode
+        _cf_strength = cfg.contract_feedback_strength
+        if cfg.ablation_no_contract or cfg.ablation_raw_delta_contract:
+            _cf_mode = "off"
+            _cf_strength = 0.0
+
+        # ── Ablation: heuristic-only segmentation ────────────────────
+        _seg_method = cfg.segmentation_method
+        _pref_iters = cfg.preference_iterations
+        if cfg.ablation_heuristic_segmentation:
+            _seg_method = "heuristic"
+            _pref_iters = 0
+
         seg_config = SegmentationConfig(
-            method=cfg.segmentation_method,
+            method=_seg_method,
             duration=duration_cfg,
             new_skill=NewSkillConfig(
                 enabled=True,
                 penalty=cfg.new_skill_penalty,
             ),
             preference=PreferenceLearningConfig(
-                num_iterations=cfg.preference_iterations,
+                num_iterations=_pref_iters,
                 margin_threshold=cfg.margin_threshold,
                 max_queries_per_iter=cfg.max_queries_per_iter,
             ),
@@ -410,8 +444,8 @@ class SkillBankAgent:
                    if cfg.llm_teacher_max_tokens is not None else {}),
             ),
             contract_feedback=ContractFeedbackConfig(
-                mode=cfg.contract_feedback_mode,
-                strength=cfg.contract_feedback_strength,
+                mode=_cf_mode,
+                strength=_cf_strength,
             ),
         )
         proposal_config = ProposalConfig(merge_radius=cfg.merge_radius)
@@ -806,6 +840,16 @@ class SkillBankAgent:
         from skill_agents_grpo.stage3_mvp.config import Stage3MVPConfig
 
         cfg = self.config
+
+        # ── Ablation: w/o effect contract ────────────────────────────
+        if cfg.ablation_no_contract:
+            logger.info("[ablation] ablation_no_contract=True — skipping Stage 3.")
+            return Stage3MVPSummary()
+
+        # ── Ablation: raw delta contract ─────────────────────────────
+        if cfg.ablation_raw_delta_contract:
+            return self._run_raw_delta_contract_learning()
+
         s3_config = Stage3MVPConfig(
             eff_freq=cfg.eff_freq,
             min_instances_per_skill=cfg.min_instances_per_skill,
@@ -843,6 +887,88 @@ class SkillBankAgent:
         logger.info("Stage 3: %s", summary)
         self._invalidate_query_engine()
         return summary
+
+    # ── Ablation: raw delta contract learning ──────────────────────
+
+    def _run_raw_delta_contract_learning(self) -> Any:
+        """Raw delta contract ablation.
+
+        Instead of the full Stage 3 pipeline (multi-instance frequency
+        aggregation + verification + refinement), computes contracts as
+        the raw predicate delta (B_end − B_start) from individual
+        segment instances.  No consensus across instances, no
+        verification pass rates.  Each instance's delta is unioned
+        into the contract directly.
+        """
+        from skill_agents_grpo.stage3_mvp.run_stage3_mvp import Stage3MVPSummary
+        from skill_agents_grpo.stage3_mvp.schemas import SkillEffectsContract
+
+        logger.info("[ablation] Running raw-delta contract learning.")
+        self._ensure_predicates_extracted()
+
+        non_new = [
+            rec for rec in self._all_segments
+            if rec.skill_label.upper() != "NEW" and rec.skill_label != "__NEW__"
+        ]
+        if not non_new:
+            return Stage3MVPSummary()
+
+        by_skill: Dict[str, List[SegmentRecord]] = defaultdict(list)
+        for rec in non_new:
+            by_skill[rec.skill_label].append(rec)
+
+        # Ensure B_start / B_end are populated on each segment
+        from skill_agents_grpo.stage3_mvp.config import Stage3MVPConfig
+        from skill_agents_grpo.stage3_mvp.predicate_vocab import PredicateVocab
+        from skill_agents_grpo.stage3_mvp.segment_summarize import (
+            _aggregate_window,
+            _booleanize,
+        )
+        s3_cfg = Stage3MVPConfig(start_end_window=self.config.start_end_window)
+
+        for rec in non_new:
+            if rec.B_start or rec.B_end:
+                continue
+            preds = self._predicates_by_traj.get(rec.traj_id, [])
+            if not preds or rec.t_start >= len(preds):
+                continue
+            vocab = PredicateVocab()
+            vocab.update_from_observations(preds)
+            w = min(s3_cfg.start_end_window, max(1, (rec.t_end - rec.t_start + 1) // 2))
+            window_start = preds[rec.t_start: rec.t_start + w]
+            window_end = preds[max(rec.t_start, rec.t_end - w + 1): rec.t_end + 1]
+            P_start = _aggregate_window(window_start, vocab, s3_cfg.ui_or_mode)
+            P_end = _aggregate_window(window_end, vocab, s3_cfg.ui_or_mode)
+            rec.B_start = _booleanize(P_start, vocab, s3_cfg.p_thresh_vision)
+            rec.B_end = _booleanize(P_end, vocab, s3_cfg.p_thresh_vision)
+
+        for skill_id, instances in by_skill.items():
+            all_add: set = set()
+            all_del: set = set()
+            all_evt: set = set()
+            for rec in instances:
+                raw_add = rec.B_end - rec.B_start
+                raw_del = rec.B_start - rec.B_end
+                all_add |= raw_add
+                all_del |= raw_del
+                if rec.events:
+                    all_evt |= set(rec.events)
+
+            contract = SkillEffectsContract(
+                skill_id=skill_id,
+                eff_add=all_add,
+                eff_del=all_del,
+                eff_event=all_evt,
+                n_instances=len(instances),
+            )
+            self.bank.add_or_update(contract)
+
+        self._invalidate_query_engine()
+        logger.info(
+            "[ablation] Raw-delta contracts computed for %d skills.",
+            len(by_skill),
+        )
+        return Stage3MVPSummary()
 
     # ── Protocol update ────────────────────────────────────────────
 

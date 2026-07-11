@@ -36,9 +36,15 @@ GAME_MAX_STEPS: Dict[str, int] = {
     "sokoban": 200,
     "candy_crush": 50,
     "super_mario": 500,  # kept for reference if re-enabled
+    "webshop": 50,
+    "alfworld": 50,
 }
 
 EMULATOR_GAMES = {"pokemon_red"}
+
+# Text-based environments (WebShop, ALFWorld) — separate from GamingAgent /
+# Orak / Evolver games; dispatched in episode_runner via their own wrappers.
+TEXT_ENV_GAMES = {"webshop", "alfworld"}
 
 # ── Multi-role rollout constants ─────────────────────────────────────
 # When ``unified_role_rollouts`` is enabled, the same decision agent
@@ -282,6 +288,15 @@ class CoEvolutionConfig:
     thread_workers: int = 64
     process_workers: int = 8
 
+    # ALFWorld split control — which data split to use for training rollouts
+    # ("train", "eval_in_distribution", "eval_out_of_distribution").
+    alfworld_split: Optional[str] = None
+    alfworld_eval_split: str = "eval_out_of_distribution"
+    alfworld_task_types: Optional[List[int]] = None
+
+    # Episode retry count (ALFWorld PDDL init can still fail occasionally)
+    max_episode_retries: int = 4
+
     # Early episode termination
     stuck_window: int = 15
     min_steps_before_stuck_check: int = 20
@@ -344,6 +359,37 @@ class CoEvolutionConfig:
     # "GRPO w/ fixed skill bank" row in the paper's Table 1 ablation.
     # Mutually exclusive with ``disable_skillbank``.
     freeze_skillbank: bool = False
+
+    # ── Ablation: w/o effect contract ───────────────────────────────
+    # When True, predicate-level eff_add/eff_del/eff_event contracts
+    # are disabled.  Stage 3 (contract learn/verify) is skipped,
+    # contract_compat scorer weight is forced to 0, and the reward
+    # computer's follow_predicate_bonus / follow_completion_bonus are
+    # zeroed.  Natural-language skill protocols are kept — the decision
+    # agent still retrieves and follows skills by NL description.
+    # Answers: is the predicate-level contract machinery necessary,
+    # or does the NL protocol alone suffice?
+    ablation_no_contract: bool = False
+
+    # ── Ablation: raw delta contract ────────────────────────────────
+    # When True, contracts are computed as a raw predicate delta
+    # (B_end − B_start per single instance) instead of aggregating
+    # across multiple instances with frequency thresholds and multi-
+    # instance consensus/verification.  No support counting, no
+    # verification pass rates, no refine step.
+    # Answers: is the contract just predicate counting, or does the
+    # multi-instance consensus actually matter?
+    ablation_raw_delta_contract: bool = False
+
+    # ── Ablation: heuristic-only segmentation ───────────────────────
+    # When True, Stage 2 uses only heuristic boundary proposals
+    # (tag changes, changepoints, event spikes) with fixed-length
+    # splitting — no learned preference scorer, no Viterbi/beam
+    # decoding, no LLM teacher.  Skills are assigned by majority
+    # intention tag in each segment.
+    # Answers: is the learned segmentation a core contribution,
+    # or do simple heuristic boundaries suffice (SkillRL weak)?
+    ablation_heuristic_segmentation: bool = False
 
     _resolved: bool = field(default=False, repr=False)
 

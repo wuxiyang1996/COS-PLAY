@@ -34,6 +34,24 @@ pip install -r install/requirements.txt   # full training stack
 bash install/install_orak_mario.sh
 ```
 
+## WebShop + ALFWorld (text environments)
+
+These are text-based interactive environments for evaluating agents on
+shopping and household tasks.
+
+```bash
+bash scripts/install_text_envs.sh
+```
+
+**Prerequisites:**
+- WebShop repo cloned to `/workspace/WebShop` (or set `WEBSHOP_ROOT`)
+- Internet access for `alfworld-download` (~320 MB of game data)
+
+After installation, both environments are available as COS-PLAY games:
+`webshop` and `alfworld`. Add them to `SKILL_BANK_GAMES` in
+`trainer/coevolution/config.py` or pass `--games webshop,alfworld`
+to `scripts/run_coevolution.py`.
+
 ## Data
 
 Download pre-labeled cold-start data (skip Steps 1–2 of the pipeline):

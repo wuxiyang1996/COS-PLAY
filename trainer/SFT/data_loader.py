@@ -399,7 +399,14 @@ def load_decision_adapter_data(
         path = base / game / f"{adapter_name}.jsonl"
         rows = _read_jsonl(path)
         for row in rows:
-            if adapter_name == "action_taking":
+            if adapter_name == "action_taking" and game in ("webshop", "alfworld"):
+                # Text-env cold-start rows are exported in the exact
+                # co-evolution rollout format (Task + raw Observation +
+                # REASONING/ACTION output) — only upgrade the skill block
+                # to the full protocol format used at rollout time.
+                ex = _normalise_example(row)
+                ex["prompt"] = _upgrade_skill_guidance_block(ex["prompt"], bank or None)
+            elif adapter_name == "action_taking":
                 ex = _align_action_taking_to_coevolution(row, skill_bank=bank or None)
             elif adapter_name == "skill_selection" and bank:
                 ex = _normalise_example(row)

@@ -76,7 +76,17 @@ State predicates at segment start: {predicates_start}
 State predicates at segment end: {predicates_end}
 
 Summarize the effects of this skill as a JSON object:
-{{"eff_add": ["predicates that become true"], "eff_del": ["predicates that become false"], "description": "one-line description"}}"""
+{{"eff_add": ["predicates that become true"], "eff_del": ["predicates that become false"], "description": "..."}}
+
+Rules for "description" (1-2 sentences, prescriptive — written as advice \
+to a player, NOT a restatement of the effects):
+- Say WHEN to use the skill (the triggering situation), WHAT to do \
+(concrete actions), and one pitfall to AVOID if the evidence shows one.
+- Good: "When the target object is not visible, visit each unopened \
+container exactly once and take the object as soon as you see it; avoid \
+revisiting containers you already searched."
+- Bad: "This skill transitions the phase to endgame and changes locations." \
+(effect restatement — never do this)"""
 
 
 def _get_contract_ask_fn() -> Optional[Callable[..., str]]:

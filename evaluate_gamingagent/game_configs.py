@@ -318,6 +318,28 @@ GAME_CONFIGS: Dict[str, GameConfig] = {
         description="Heads-up poker vs random opponent",
         notes="Imperfect-info game; single hand per episode",
     ),
+
+    # ── Text-based environments ────────────────────────────────────
+    "webshop": GameConfig(
+        name="webshop",
+        display_name="WebShop",
+        category="text_env",
+        max_steps=50,
+        episodes=5,
+        description="Online shopping assistant: search, browse, buy products",
+        available=True,
+        notes="Text-based e-commerce environment. Actions: search[query], click[element]",
+    ),
+    "alfworld": GameConfig(
+        name="alfworld",
+        display_name="ALFWorld",
+        category="text_env",
+        max_steps=50,
+        episodes=5,
+        description="Household task completion in a TextWorld environment",
+        available=True,
+        notes="Text-based embodied agent. Actions: natural language commands (go to X, pick up Y, etc.)",
+    ),
 }
 
 ALL_GAME_NAMES: List[str] = sorted(GAME_CONFIGS.keys())

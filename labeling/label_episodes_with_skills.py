@@ -977,6 +977,53 @@ _SKILL_SYSTEM = (
     "SKILL: <number>\n"
 )
 
+# Text envs (WebShop / ALFWorld) — must match
+# trainer/coevolution/episode_runner.py::TEXTENV_SYSTEM_PROMPT exactly,
+# so SFT prompts are identical to co-evolution rollout prompts.
+_TEXTENV_GAMES = {"webshop", "alfworld"}
+
+_TEXTENV_ACTION_SYSTEM = (
+    "You are an expert agent in a text-based environment. "
+    "You receive a task, the current observation, and a numbered list of "
+    "available actions. Choose exactly one action by its NUMBER.\n\n"
+    "Rules:\n"
+    "- Re-read the task: every requirement matters "
+    "(attributes, options, price limits, target locations).\n"
+    "- Study the observation carefully before choosing.\n"
+    "- NEVER repeat the same action more than 2 times in a row — try something different.\n"
+    "- For a search action, write the full query instead of a number: "
+    "ACTION: search[<your keywords>]\n\n"
+    "Output format (strict):\n"
+    "REASONING: <1-2 sentences>\n"
+    "ACTION: <number or search[keywords]>\n"
+)
+
+
+def _textenv_recent_context(
+    prev_actions: List[str], prev_rewards: List[float],
+) -> str:
+    """Replicates episode_runner._build_recent_context for cold-start export."""
+    if not prev_actions:
+        return ""
+    lines = ["Recent actions and rewards:"]
+    for a, r in zip(prev_actions[-5:], prev_rewards[-5:]):
+        lines.append(f"  {a} -> reward {r:.1f}")
+    total = sum(prev_rewards[-5:])
+    if total == 0 and len(prev_actions) >= 3:
+        lines.append("WARNING: Recent actions got 0 reward. Try a DIFFERENT action!")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _textenv_strip_goal_prefix(obs: str) -> str:
+    """Drop the wrapper-prepended ``Goal: ...`` block (WebShop) so the pinned
+    ``Task:`` line is not duplicated."""
+    if obs.startswith("Goal:"):
+        sep = obs.find("\n\n")
+        if sep > 0:
+            return obs[sep + 2:]
+    return obs
+
 
 _POKEMON_RED_ACTIONS = [
     "up", "down", "left", "right", "a", "b", "start", "select",
@@ -1038,6 +1085,16 @@ def _normalize_action(action: str, available_actions: list, game_name: str):
             return available_actions, action
         return _POKEMON_RED_ACTIONS, "a"
 
+    # WebShop parametric search: the menu shows the ``search[query]``
+    # placeholder but the expert emits the actual keywords.  Keep the full
+    # string so SFT teaches the model to write real queries.
+    if (
+        game_name == "webshop"
+        and action.lower().startswith("search[")
+        and action not in available_actions
+    ):
+        return available_actions, action
+
     if action in available_actions:
         return available_actions, available_actions.index(action) + 1
 
@@ -1071,6 +1128,16 @@ def export_grpo_coldstart_data(
         episode_id = f"{game_name}_episode"
     experiences = episode_data.get("experiences", [])
 
+    is_text_env = game_name in _TEXTENV_GAMES
+    goal_text = ""
+    if is_text_env:
+        goal_text = str(episode_data.get("task", "") or "").strip()
+        if goal_text.lower().startswith("instruction:"):
+            goal_text = goal_text[len("instruction:"):].strip()
+    _prev_actions: List[str] = []
+    _prev_rewards: List[float] = []
+    _cum_reward = 0.0
+
     grpo_dir.mkdir(parents=True, exist_ok=True)
     action_path = grpo_dir / "action_taking.jsonl"
     skill_path = grpo_dir / "skill_selection.jsonl"
@@ -1089,6 +1156,20 @@ def export_grpo_coldstart_data(
             summary_state = exp.get("summary_state", "")
             intention = exp.get("intentions", "")
             skills_label = exp.get("skills")
+
+            if is_text_env:
+                # Recompute the compact summary with the current fact
+                # extractors (goal no longer truncated) so skill_selection
+                # prompts match what the co-evolution rollout will produce.
+                try:
+                    from decision_agents.agent_helper import build_rag_summary
+                    summary_state = build_rag_summary(
+                        state, game_name,
+                        step_idx=max(step_idx, 0), total_steps=50,
+                        reward=_cum_reward,
+                    )
+                except Exception:
+                    pass
 
             # ── Action-taking sample ──────────────────────────
             raw_available = exp.get("available_actions")
@@ -1116,7 +1197,19 @@ def export_grpo_coldstart_data(
                 sk_parts.append("--- end skill ---\n")
                 skill_block = "\n".join(sk_parts)
 
-            if game_name == "pokemon_red":
+            if is_text_env:
+                raw_obs = _textenv_strip_goal_prefix(state)
+                recent_block = _textenv_recent_context(_prev_actions, _prev_rewards)
+                action_prompt = (
+                    _TEXTENV_ACTION_SYSTEM + skill_block + "\n"
+                    f"Task: {goal_text}\n\n"
+                    f"Observation:\n{raw_obs[:3000]}\n\n"
+                    f"Subgoal: {intention}\n"
+                    f"{recent_block}"
+                    f"Available actions (pick ONE by number):\n{action_lines}\n\n"
+                    f"Choose the best action. Output REASONING then ACTION number."
+                )
+            elif game_name == "pokemon_red":
                 action_prompt = (
                     _ACTION_SYSTEM_POKEMON + skill_block + "\n"
                     f"Game state:\n\n{state_text}\n\n"
@@ -1136,7 +1229,19 @@ def export_grpo_coldstart_data(
                 if len(reasoning_text) > 200:
                     reasoning_text = reasoning_text[:197] + "..."
             if not reasoning_text or len(reasoning_text) < 10:
-                reasoning_text = "Expert play."
+                # Synthesize reasoning from the intention and action so
+                # the model learns to actually think, not just output
+                # "Expert play." (which the LoRA memorises as a constant).
+                _int = intention or ""
+                _act = str(action) if action else ""
+                if _int and _act:
+                    reasoning_text = f"The current subgoal is {_int.strip()}, so {_act} is the best next step."
+                elif _int:
+                    reasoning_text = f"Following the subgoal: {_int.strip()}."
+                elif _act:
+                    reasoning_text = f"Choosing {_act} to make progress on the task."
+                else:
+                    reasoning_text = "Making progress toward the task goal."
             action_completion = f"REASONING: {reasoning_text}\nACTION: {action_num}"
 
             action_sample = {
@@ -1155,6 +1260,12 @@ def export_grpo_coldstart_data(
             }
             f_act.write(json.dumps(action_sample, ensure_ascii=False) + "\n")
             n_action += 1
+
+            # Track history for the text-env recent-context block
+            # (must run before the skill-selection ``continue``).
+            _prev_actions.append(str(action))
+            _prev_rewards.append(float(reward))
+            _cum_reward += float(reward)
 
             # ── Skill-selection sample ────────────────────────
             candidates = exp.get("skill_candidates")
