@@ -84,6 +84,7 @@ Pre-generated data: [HuggingFace `IntelligenceLab/Cos-Play-Cold-Start`](https://
 | 2048, Tetris, Candy Crush | [GamingAgent](https://github.com/lmgame-org/GamingAgent) |
 | Avalon, Diplomacy | [AgentEvolver](https://github.com/modelscope/AgentEvolver) |
 | Super Mario | [Orak](https://github.com/krafton-ai/Orak) (`install/install_orak_mario.sh`) |
+| ALFWorld, WebShop | [SkillRL](https://github.com/aiming-lab/SkillRL) text benchmarks — see [docs/ALFWORLD_WEBSHOP.md](docs/ALFWORLD_WEBSHOP.md) |
 
 ## Hardware
 

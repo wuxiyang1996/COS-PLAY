@@ -52,6 +52,11 @@ After installation, both environments are available as COS-PLAY games:
 `trainer/coevolution/config.py` or pass `--games webshop,alfworld`
 to `scripts/run_coevolution.py`.
 
+Full usage — serving SkillRL checkpoints, paired inference-time-control
+evaluations (including the official Lucene WebShop protocol and the
+official ALFWorld ID protocol), and reference results — is documented in
+[docs/ALFWORLD_WEBSHOP.md](docs/ALFWORLD_WEBSHOP.md).
+
 ## Data
 
 Download pre-labeled cold-start data (skip Steps 1–2 of the pipeline):

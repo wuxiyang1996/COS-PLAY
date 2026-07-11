@@ -468,6 +468,17 @@ class Controller:
     def repair(self, candidate: str, admissible: list[str]) -> tuple[str, bool]:
         counts = Counter(self.actions[-6:])
 
+        # Do not abandon a viable product while a required option is visibly
+        # available but not yet selected. This is the main short-horizon
+        # failure mode under SkillRL's official 15-step protocol.
+        if self.page == "product" and (
+            "back to search" in candidate.lower()
+            or candidate.lower().strip() == "click[< prev]"
+        ):
+            missing = self._missing_options(admissible)
+            if missing:
+                return missing[0], True
+
         # Hard veto: Buy Now when options/price not satisfied (partial-match fails)
         if candidate.lower().strip() in ("click[buy now]", "buy now") or (
             candidate.startswith("click[") and "buy now" in candidate.lower()
